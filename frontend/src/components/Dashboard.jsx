@@ -351,65 +351,67 @@ function Dashboard() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     // Используем params.get(), который автоматически декодирует
-    const idFromUrlDecoded = params.get('courseId');
+    const idFromUrlDecoded = params.get("courseId");
 
     console.log("--- Dashboard useEffect ---");
     console.log("1. Декодированный ID из URL:", idFromUrlDecoded);
 
     if (idFromUrlDecoded) {
-        setCourseId(idFromUrlDecoded); // Сохраняем декодированный ID
+      setCourseId(idFromUrlDecoded); // Сохраняем декодированный ID
 
-        setLoading(true);
-        setError(null);
+      setLoading(true);
+      setError(null);
 
-        const storedCourses = localStorage.getItem('uploadedCourses');
-        console.log("2. Данные из localStorage:", storedCourses);
+      const storedCourses = localStorage.getItem("uploadedCourses");
+      console.log("2. Данные из localStorage:", storedCourses);
 
-        let courses = [];
-        try {
-            courses = storedCourses ? JSON.parse(storedCourses) : [];
-            console.log("3. Распарсенные курсы:", courses);
-        } catch (e) {
-            console.error("Ошибка парсинга JSON из localStorage:", e);
-            setError('Ошибка чтения данных о курсах.');
-            setCourseTitle('Ошибка');
-            setLoading(false);
-            return;
-        }
+      let courses = [];
+      try {
+        courses = storedCourses ? JSON.parse(storedCourses) : [];
+        console.log("3. Распарсенные курсы:", courses);
+      } catch (e) {
+        console.error("Ошибка парсинга JSON из localStorage:", e);
+        setError("Ошибка чтения данных о курсах.");
+        setCourseTitle("Ошибка");
+        setLoading(false);
+        return;
+      }
 
-        // Ищем курс, сравнивая ДЕКОДИРОВАННЫЙ ID из URL с ДЕКОДИРОВАННЫМ ID из localStorage
-        const currentCourse = courses.find(course => {
-            const localStorageIdDecoded = decodeURIComponent(course.id); // Декодируем ID из localStorage
-            console.log(`Сравнение: localStorage Decoded ID (${typeof localStorageIdDecoded}) "${localStorageIdDecoded}" === URL Decoded ID (${typeof idFromUrlDecoded}) "${idFromUrlDecoded}"`);
-            return localStorageIdDecoded === idFromUrlDecoded; // Сравниваем декодированные строки
-        });
-        console.log("4. Найденный курс:", currentCourse);
+      // Ищем курс, сравнивая ДЕКОДИРОВАННЫЙ ID из URL с ДЕКОДИРОВАННЫМ ID из localStorage
+      const currentCourse = courses.find((course) => {
+        const localStorageIdDecoded = decodeURIComponent(course.id); // Декодируем ID из localStorage
+        console.log(
+          `Сравнение: localStorage Decoded ID (${typeof localStorageIdDecoded}) "${localStorageIdDecoded}" === URL Decoded ID (${typeof idFromUrlDecoded}) "${idFromUrlDecoded}"`
+        );
+        return localStorageIdDecoded === idFromUrlDecoded; // Сравниваем декодированные строки
+      });
+      console.log("4. Найденный курс:", currentCourse);
 
-        if (currentCourse) {
-            setCourseTitle(currentCourse.name);
-            console.log(`Найден курс: ${currentCourse.name}. Загрузка данных...`);
-            setTimeout(() => {
-                setMetrics(mockMetrics);
-                setStepData(generateMockStepData(mockMetrics));
-                setLoading(false);
-            }, 500);
-        } else {
-            setCourseTitle('Курс не найден');
-            console.error(`Курс с ID "${idFromUrlDecoded}" не найден.`);
-            setError(`Курс с ID "${idFromUrlDecoded}" не найден.`);
-            setMetrics(null);
-            setStepData([]);
-            setLoading(false);
-        }
+      if (currentCourse) {
+        setCourseTitle(currentCourse.name);
+        console.log(`Найден курс: ${currentCourse.name}. Загрузка данных...`);
+        setTimeout(() => {
+          setMetrics(mockMetrics);
+          setStepData(generateMockStepData(mockMetrics));
+          setLoading(false);
+        }, 500);
+      } else {
+        setCourseTitle("Курс не найден");
+        console.error(`Курс с ID "${idFromUrlDecoded}" не найден.`);
+        setError(`Курс с ID "${idFromUrlDecoded}" не найден.`);
+        setMetrics(null);
+        setStepData([]);
+        setLoading(false);
+      }
     } else {
-         setCourseTitle('Курс не выбран');
-         console.warn("ID курса не найден в URL.");
-         setError("Не указан ID курса в адресе страницы.");
-         setMetrics(null);
-         setStepData([]);
-         setLoading(false);
+      setCourseTitle("Курс не выбран");
+      console.warn("ID курса не найден в URL.");
+      setError("Не указан ID курса в адресе страницы.");
+      setMetrics(null);
+      setStepData([]);
+      setLoading(false);
     }
-}, [location.search]); // Зависимость от location.search
+  }, [location.search]); // Зависимость от location.search
 
   // Подготовка данных для графика
   const dataForChart = stepData.map((item) => ({
@@ -520,23 +522,59 @@ function Dashboard() {
   ];
 
   // Обновленная функция для сравнения шагов
+  // --- Обновленная функция для сравнения шагов ---
   const handleCompareSteps = () => {
     if (selectedStepIds.length < 2) {
       alert("Пожалуйста, выберите хотя бы два шага для сравнения.");
       return;
     }
-    // Формируем строку с ID шагов, разделенными запятыми
     const stepsQueryParam = selectedStepIds.join(",");
-    // Переходим на страницу сравнения, передавая courseId (закодированный!) и steps
-    const encodedCourseId = encodeURIComponent(courseId); // Используем courseId из состояния
-    navigate(`/compare?courseId=${encodedCourseId}&steps=${stepsQueryParam}`);
+
+    // --- НАХОДИМ ПРАВИЛЬНЫЙ ЗАКОДИРОВАННЫЙ ID ---
+    // Сначала получаем декодированный ID из состояния (он нужен для API или других мест)
+    const decodedCourseId = courseId;
+    // Находим соответствующий курс в localStorage, чтобы получить его ЗАКОДИРОВАННЫЙ ID
+    const storedCourses = localStorage.getItem("uploadedCourses");
+    let encodedCourseIdForURL = null;
+    if (storedCourses) {
+      try {
+        const courses = JSON.parse(storedCourses);
+        // Ищем по ДЕКОДИРОВАННОМУ ID, чтобы найти нужный объект
+        const currentCourse = courses.find(
+          (course) => decodeURIComponent(course.id) === decodedCourseId
+        );
+        if (currentCourse) {
+          encodedCourseIdForURL = currentCourse.id; // Берем ЗАКОДИРОВАННЫЙ ID из объекта
+        }
+      } catch (e) {
+        console.error(
+          "Ошибка при поиске закодированного ID в localStorage:",
+          e
+        );
+      }
+    }
+
+    // Если не нашли закодированный ID, используем декодированный (но это может не сработать для кириллицы)
+    if (!encodedCourseIdForURL) {
+      console.warn(
+        "Не удалось найти закодированный ID в localStorage, используется декодированный."
+      );
+      encodedCourseIdForURL = encodeURIComponent(decodedCourseId); // Кодируем на всякий случай
+    }
+    // --- КОНЕЦ ПОИСКА ЗАКОДИРОВАННОГО ID ---
+
+    // Переходим на страницу сравнения, передавая ЗАКОДИРОВАННЫЙ courseId и steps
+    navigate(
+      `/compare?courseId=${encodedCourseIdForURL}&steps=${stepsQueryParam}`
+    );
     console.log(
       "Переход на сравнение шагов:",
       selectedStepIds,
-      "для курса ID:",
-      encodedCourseId
+      "для курса ID (encoded):",
+      encodedCourseIdForURL
     );
   };
+  // --- Конец обновленной функции ---
 
   // --- Отображение лоадера или ошибки, если данных нет ---
   if (loading) {

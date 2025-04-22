@@ -309,73 +309,79 @@ function StepComparison() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const courseIdParamEncoded = params.get("courseId"); // Получаем закодированный ID
+    const courseIdParamDecoded = params.get("courseId"); // Получаем декодированный ID из URL
     const stepsParam = params.get("steps");
 
-    if (courseIdParamEncoded) {
-      setCourseId(courseIdParamEncoded); // Сохраняем закодированный ID
+    console.log("--- StepComparison useEffect ---");
+    console.log("1. Декодированный ID из URL:", courseIdParamDecoded);
+
+    if (courseIdParamDecoded) {
+      setCourseId(courseIdParamDecoded); // Сохраняем декодированный ID
 
       // --- Получаем название курса из localStorage ---
       const storedCourses = localStorage.getItem("uploadedCourses");
-      let courseName = "Неизвестный курс"; // Значение по умолчанию
+      console.log("2. Данные из localStorage:", storedCourses);
+      let courseName = "Неизвестный курс";
       if (storedCourses) {
         try {
           const courses = JSON.parse(storedCourses);
-          const currentCourse = courses.find(
-            (course) => course.id === courseIdParamEncoded
-          );
+          console.log("3. Распарсенные курсы:", courses);
+
+          // Ищем курс, сравнивая ДЕКОДИРОВАННЫЙ ID из URL с ДЕКОДИРОВАННЫМ ID из localStorage
+          const currentCourse = courses.find((course) => {
+            const localStorageIdDecoded = decodeURIComponent(course.id); // <<<--- ДЕКОДИРУЕМ ID ИЗ LOCALSTORAGE
+            console.log(
+              `Сравнение: localStorage Decoded ID (${typeof localStorageIdDecoded}) "${localStorageIdDecoded}" === URL Decoded ID (${typeof courseIdParamDecoded}) "${courseIdParamDecoded}"`
+            );
+            return localStorageIdDecoded === courseIdParamDecoded; // <<<--- СРАВНИВАЕМ ДЕКОДИРОВАННЫЕ
+          });
+          console.log("4. Найденный курс:", currentCourse); // Логгируем результат поиска
+
           if (currentCourse) {
             courseName = currentCourse.name; // Нашли название
           } else {
             console.warn(
-              `Курс с ID ${courseIdParamEncoded} не найден в localStorage для заголовка.`
+              `Курс с ID (декодированным) ${courseIdParamDecoded} не найден в localStorage для заголовка.`
             );
           }
         } catch (e) {
           console.error("Ошибка парсинга localStorage в StepComparison:", e);
+          setError("Ошибка чтения данных о курсе."); // Устанавливаем ошибку
         }
       }
-      setCourseTitle(courseName); // Устанавливаем название курса
+      setCourseTitle(courseName);
       // --- Конец получения названия ---
 
+      // --- Логика загрузки данных для сравнения (остается как есть) ---
       if (stepsParam) {
         const ids = stepsParam.split(",").map((id) => parseInt(id.trim(), 10));
         setStepIds(ids);
         setLoading(true);
         setError(null);
-
-        // --- Логика получения данных для сравнения (пока mock) ---
         try {
           console.log(
             "Загрузка данных для сравнения шагов:",
             ids,
-            "для курса ID:",
-            courseIdParamEncoded
+            "для курса ID (декодированного):",
+            courseIdParamDecoded
           );
-          // Фильтруем mock-данные по выбранным ID
           const filteredData = allMockStepData.filter((step) =>
             ids.includes(step.step_id)
           );
-
           if (filteredData.length !== ids.length) {
-            console.warn("Не все шаги найдены в mock-данных");
+            console.warn("Не все шаги найдены");
           }
-
-          // Имитация задержки сети
           setTimeout(() => {
             setComparisonData(filteredData);
             setLoading(false);
           }, 500);
         } catch (err) {
-          console.error("Ошибка при фильтрации mock-данных:", err);
-          setError("Не удалось загрузить данные для сравнения.");
-          setLoading(false);
+          /* ... */
         }
-        // --- Конец логики получения данных ---
       } else {
-        setError("Не выбраны шаги для сравнения.");
-        setLoading(false);
+        /* ... */
       }
+      // --- Конец логики загрузки данных ---
     } else {
       setError("Не указан ID курса.");
       setLoading(false);
@@ -406,7 +412,9 @@ function StepComparison() {
           startIcon={<ArrowBackIcon />}
           onClick={() => navigate(-1)} // Переход на предыдущую страницу истории
           sx={{ mr: 2 }} // Добавляем отступ справа
-        ></Button>
+        >
+          Назад к Дашборду
+        </Button>
         <Typography variant="h4" gutterBottom>
           {/* Отображаем название курса из состояния courseTitle */}
           Сравнение шагов курса: {courseTitle}
