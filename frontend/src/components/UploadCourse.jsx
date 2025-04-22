@@ -1,4 +1,3 @@
-// frontend/src/components/UploadCourse.jsx
 import React, { useState, useEffect } from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
@@ -25,7 +24,7 @@ import {
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import DeleteIcon from "@mui/icons-material/Delete"; // Добавляем иконку удаления
-import { csvExamples } from "./UploadCourseExamples";
+import { csvExamples } from "./UploadCourseExamples"; // Убедитесь, что этот файл существует и экспортирует csvExamples
 
 const requiredFileTypes = ["learners", "structure", "submissions", "comments"];
 
@@ -63,6 +62,11 @@ function UploadCourse() {
   const [modalError, setModalError] = useState(null);
   // --- Конец состояний ---
 
+  // --- Состояния для диалога подтверждения удаления ---
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [courseToDelete, setCourseToDelete] = useState(null); // Храним ID и имя курса для удаления
+  // --- Конец состояний ---
+
   // Сохраняем в localStorage при изменении uploadedCourses
   useEffect(() => {
     try {
@@ -87,6 +91,7 @@ function UploadCourse() {
     }
   }, [selectedFiles, isNameModalOpen]);
 
+  // --- Обработчики ---
   const handleFileChange = (event, fileType) => {
     const file = event.target.files[0];
     if (file) {
@@ -105,7 +110,6 @@ function UploadCourse() {
 
   const handleCloseDialog = () => setDialogOpen(false);
 
-  // --- Обработчики для модального окна названия курса ---
   const handleModalCourseNameChange = (event) => {
     setModalCourseName(event.target.value);
     if (modalError) setModalError(null); // Сбрасываем ошибку при вводе
@@ -187,24 +191,28 @@ function UploadCourse() {
       setIsNameModalOpen(true); // Открываем модалку снова при ошибке сохранения
     }
   };
-  // --- Конец обработчиков модального окна ---
 
-  // --- Функция удаления курса ---
-  const handleDeleteCourse = (courseIdToDelete) => {
-    // Запрашиваем подтверждение у пользователя
-    if (
-      window.confirm(
-        "Вы уверены, что хотите удалить этот курс? Это действие необратимо."
-      )
-    ) {
-      console.log("Удаление курса с ID:", courseIdToDelete);
+  const openDeleteDialog = (course) => {
+    setCourseToDelete(course); // Сохраняем весь объект курса
+    setIsDeleteDialogOpen(true);
+  };
+
+  const closeDeleteDialog = () => {
+    setIsDeleteDialogOpen(false);
+    setCourseToDelete(null); // Сбрасываем курс для удаления
+  };
+
+  const confirmDeleteCourse = () => {
+    if (courseToDelete) {
+      console.log("Удаление курса с ID:", courseToDelete.id);
       setUploadedCourses((prevCourses) =>
-        prevCourses.filter((course) => course.id !== courseIdToDelete)
+        prevCourses.filter((course) => course.id !== courseToDelete.id)
       );
       // Данные автоматически сохранятся в localStorage благодаря useEffect
     }
+    closeDeleteDialog(); // Закрываем диалог после удаления
   };
-  // --- Конец функции удаления ---
+  // --- Конец обработчиков ---
 
   return (
     <Box sx={{ mt: 4, mb: 4 }}>
@@ -349,7 +357,7 @@ function UploadCourse() {
                     <IconButton
                       aria-label={`Удалить курс ${course.name}`}
                       size="small"
-                      onClick={() => handleDeleteCourse(course.id)} // Передаем ID для удаления
+                      onClick={() => openDeleteDialog(course)} // Открываем диалог удаления
                       color="error" // Делаем кнопку красной для наглядности
                     >
                       <DeleteIcon fontSize="small" />
@@ -415,7 +423,7 @@ function UploadCourse() {
       >
         <DialogTitle>{dialogData.title}</DialogTitle>
         <DialogContent dividers>
-          {/* ... код отображения примера CSV ... */}
+          {/* Код отображения примера CSV */}
           {dialogData.headers.length > 0 ? (
             <TableContainer component={Paper}>
               <Table size="small" aria-label="example table">
@@ -445,6 +453,37 @@ function UploadCourse() {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseDialog}>Закрыть</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Диалог подтверждения удаления */}
+      <Dialog
+        open={isDeleteDialogOpen}
+        onClose={closeDeleteDialog}
+        aria-labelledby="delete-confirm-dialog-title"
+        aria-describedby="delete-confirm-dialog-description"
+      >
+        <DialogTitle id="delete-confirm-dialog-title">
+          {"Подтверждение удаления"}
+        </DialogTitle>
+        <DialogContent>
+          <Typography id="delete-confirm-dialog-description">
+            Вы уверены, что хотите удалить курс "{courseToDelete?.name}"? Это
+            действие необратимо.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ padding: "16px 24px" }}>
+          <Button onClick={closeDeleteDialog} color="inherit">
+            Отмена
+          </Button>
+          <Button
+            onClick={confirmDeleteCourse}
+            color="error"
+            variant="contained"
+            autoFocus
+          >
+            Удалить
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>
