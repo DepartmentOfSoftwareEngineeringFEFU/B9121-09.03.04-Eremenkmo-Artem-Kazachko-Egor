@@ -1,8 +1,7 @@
-// frontend/src/components/Dashboard.jsx
 import React, { useState, useEffect } from 'react';
 import { useLocation, Link as RouterLink } from 'react-router-dom';
 import {
-    Container, Typography, Grid, Paper, Box, Button
+    Container, Typography, Grid, Paper, Box, Button, Checkbox, FormControlLabel
 } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
 import {
@@ -104,177 +103,227 @@ const mockMetrics = {
     });
   };
   const mockStepData = generateMockStepData(mockMetrics);
-// --- Конец mock-данных ---
-
-// Определяем доступные метрики для выбора
-const availableMetrics = [
-    { value: 'completions', label: 'Завершения', dataKey: 'completions' },
-    { value: 'dropouts', label: 'Отсевы', dataKey: 'dropouts' },
-    { value: 'avg_time', label: 'Среднее время (сек)', dataKey: 'avg_time' },
-    { value: 'avg_attempts', label: 'Среднее число попыток', dataKey: 'avg_attempts' },
-    // Добавьте другие метрики при необходимости
-];
-
-function Dashboard() {
-    const location = useLocation();
-    const uploadedFiles = location.state?.files || []; // Получаем загруженные файлы (пока не используем)
-
-    // Состояние для хранения данных (пока используем mock)
-    const [metrics, setMetrics] = useState(mockMetrics);
-    const [stepData, setStepData] = useState(mockStepData);
-    const [selectedMetric, setSelectedMetric] = useState(availableMetrics[0]); // Метрика для графика по умолчанию
-
-    useEffect(() => {
-        // Здесь будет логика получения данных с backend по API
-        // Пока используем mock данные, которые уже установлены в useState
-        // const fetchMetrics = async () => {
-        //     try {
-        //         const response = await fetch('/api/metrics'); // Пример запроса
-        //         if (!response.ok) throw new Error('Network response was not ok');
-        //         const data = await response.json();
-        //         setMetrics(data);
-        //         setStepData(generateMockStepData(data)); // Генерируем данные для таблицы из полученных метрик
-        //     } catch (error) {
-        //         console.error("Ошибка загрузки метрик:", error);
-        //         // Обработка ошибки (например, показать сообщение пользователю)
-        //     }
-        // };
-        // fetchMetrics();
-    }, []); // Пустой массив зависимостей означает, что эффект выполнится один раз при монтировании
-
-    // Подготовка данных для графика на основе выбранной метрики
-    const dataForChart = stepData.map(item => ({
-        step: item.name, // Используем имя шага для оси X
-        value: item[selectedMetric.dataKey], // Значение выбранной метрики
-    }));
-
-    // Находим мин и макс для ReferenceLine
-    const valuesForChart = dataForChart.map(item => item.value).filter(v => typeof v === 'number'); // Убедимся, что работаем только с числами
-    const minValue = valuesForChart.length > 0 ? Math.min(...valuesForChart) : 0;
-    const maxValue = valuesForChart.length > 0 ? Math.max(...valuesForChart) : 0;
-
-    // Определяем колонки для DataGrid
-    const columns = [
-        { field: 'step_id', headerName: 'ID шага', width: 100 },
-        { field: 'name', headerName: 'Название шага', width: 150 },
-        { field: 'completions', headerName: 'Завершения', type: 'number', width: 120 },
-        { field: 'dropouts', headerName: 'Отсевы', type: 'number', width: 100 },
-        { field: 'avg_time', headerName: 'Ср. время (сек)', type: 'number', width: 130 },
-        { field: 'success_rate', headerName: 'Успешность', width: 120 },
-        { field: 'avg_attempts', headerName: 'Ср. попытки', type: 'number', width: 120 },
-        { field: 'comments', headerName: 'Комментарии', type: 'number', width: 120 },
-        { field: 'question_freq', headerName: 'Частота "?"', width: 120 },
-        { field: 'self_correction_rate', headerName: 'Самокоррекция', width: 130 },
-        // Добавить кнопку/ссылку для перехода к StepAnalysis
-        {
-            field: 'actions',
-            headerName: 'Анализ',
-            sortable: false,
-            width: 120, // Немного увеличим ширину
-            renderCell: (params) => (
-                // Используем RouterLink внутри Button для перехода
-                <Button
-                    variant="outlined"
-                    size="small"
-                    component={RouterLink}
-                    to={`/step/${params.row.step_id}`} // Динамический путь к странице анализа
-                >
-                    Детали
-                </Button>
-            ),
-        },
-    ];
-
-    if (!metrics || !stepData) {
-        return <div>Загрузка данных...</div>; // Или компонент лоадера
-    }
-
-    return (
-        <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-            <Typography variant="h4" gutterBottom>
-                Дашборд аналитики курса
-            </Typography>
-
-            {/* Отображение глобальных метрик */}
-            <Grid container spacing={3} sx={{ mb: 3 }}>
-                <Grid item xs={12} sm={4}>
-                    <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <Typography component="h2" variant="h6" color="primary" gutterBottom>
-                            Завершили курс
-                        </Typography>
-                        <Typography component="p" variant="h4">
-                            {(metrics.full_course_completion * 100).toFixed(1)}%
-                        </Typography>
-                    </Paper>
-                </Grid>
-                <Grid item xs={12} sm={4}>
-                    <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <Typography component="h2" variant="h6" color="primary" gutterBottom>
-                            Средний % завершения
-                        </Typography>
-                        <Typography component="p" variant="h4">
-                             {(metrics.avg_completion_percent * 100).toFixed(1)}%
-                        </Typography>
-                    </Paper>
-                </Grid>
-                 <Grid item xs={12} sm={4}>
-                    <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <Typography component="h2" variant="h6" color="primary" gutterBottom>
-                            Среднее время м/у шагами
-                        </Typography>
-                        <Typography component="p" variant="h4">
-                             {metrics.avg_time_between_steps} сек
-                        </Typography>
-                    </Paper>
-                </Grid>
-            </Grid>
-
-            {/* График */}
-            <Paper sx={{ p: 2, mb: 3 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="h6">Статистика по шагам ({selectedMetric.label})</Typography>
-                    <MetricSelector
-                        metrics={availableMetrics}
-                        selectedMetric={selectedMetric}
-                        onChange={setSelectedMetric}
-                    />
-                </Box>
-                 {/* Обертка для адаптивности графика */}
-                 <ResponsiveContainer width="100%" height={400}>
-                    <LineChart data={dataForChart} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        {/* Ось X с названиями шагов */}
-                        <XAxis dataKey="step" angle={-30} textAnchor="end" height={70} interval={0} />
-                        <YAxis />
-                        {/* Всплывающая подсказка при наведении */}
-                        <Tooltip />
-                        <Legend />
-                        {/* Линия графика */}
-                        <Line type="monotone" dataKey="value" name={selectedMetric.label} stroke="#8884d8" activeDot={{ r: 8 }} />
-                        {/* Линии для минимального и максимального значений */}
-                        {minValue !== Infinity && <ReferenceLine y={minValue} label={`Min: ${minValue}`} stroke="red" strokeDasharray="3 3" />}
-                        {maxValue !== -Infinity && <ReferenceLine y={maxValue} label={`Max: ${maxValue}`} stroke="green" strokeDasharray="3 3" />}
-                    </LineChart>
-                </ResponsiveContainer>
-            </Paper>
-
-            {/* Таблица с метриками по шагам */}
-            <Paper sx={{ height: 600, width: '100%', mb: 3 }}>
-                 <DataGrid
-                    rows={stepData}
-                    columns={columns}
-                    pageSize={10} // Количество строк на странице
-                    rowsPerPageOptions={[10, 25, 50]}
-                    checkboxSelection={false} // Отключаем чекбоксы, если не нужны
-                    disableSelectionOnClick // Отключаем выделение строки по клику
-                />
-            </Paper>
-
-            {/* Рекомендации */}
-            <Recommendations />
-
-        </Container>
-    );
-}
-
-export default Dashboard;
+  // --- Конец mock-данных ---
+  
+  // Определяем доступные метрики для выбора
+  const availableMetrics = [
+      { value: 'completions', label: 'Завершения', dataKey: 'completions' },
+      { value: 'dropouts', label: 'Отсевы', dataKey: 'dropouts' },
+      { value: 'avg_time', label: 'Среднее время (сек)', dataKey: 'avg_time' },
+      { value: 'avg_attempts', label: 'Среднее число попыток', dataKey: 'avg_attempts' },
+      // Добавьте другие метрики при необходимости
+  ];
+  
+  function Dashboard() {
+      const location = useLocation();
+      const uploadedFiles = location.state?.files || []; // Получаем загруженные файлы (пока не используем)
+      const courseName = new URLSearchParams(location.search).get('course'); // Получаем название курса из URL
+  
+      // Состояние для хранения данных (пока используем mock)
+      const [metrics, setMetrics] = useState(mockMetrics);
+      const [stepData, setStepData] = useState(mockStepData);
+      const [selectedMetric, setSelectedMetric] = useState(availableMetrics[0]); // Метрика для графика по умолчанию
+      const [selectedStepIds, setSelectedStepIds] = useState([]); // Состояние для хранения выбранных ID шагов
+  
+      useEffect(() => {
+          // Здесь будет логика получения данных с backend по API
+          // Пока используем mock данные, которые уже установлены в useState
+          // const fetchMetrics = async () => {
+          //     try {
+          //         const response = await fetch('/api/metrics'); // Пример запроса
+          //         if (!response.ok) throw new Error('Network response was not ok');
+          //         const data = await response.json();
+          //         setMetrics(data);
+          //         setStepData(generateMockStepData(data)); // Генерируем данные для таблицы из полученных метрик
+          //     } catch (error) {
+          //         console.error("Ошибка загрузки метрик:", error);
+          //         // Обработка ошибки (например, показать сообщение пользователю)
+          //     }
+          // };
+          // fetchMetrics();
+      }, []); // Пустой массив зависимостей означает, что эффект выполнится один раз при монтировании
+  
+      // Подготовка данных для графика на основе выбранной метрики
+      const dataForChart = stepData.map(item => ({
+          step: item.name, // Используем имя шага для оси X
+          value: item[selectedMetric.dataKey], // Значение выбранной метрики
+      }));
+  
+      // Находим мин и макс для ReferenceLine
+      const valuesForChart = dataForChart.map(item => item.value).filter(v => typeof v === 'number'); // Убедимся, что работаем только с числами
+      const minValue = valuesForChart.length > 0 ? Math.min(...valuesForChart) : 0;
+      const maxValue = valuesForChart.length > 0 ? Math.max(...valuesForChart) : 0;
+  
+      // Обработчик выбора шага
+      const handleStepSelection = (stepId) => {
+          setSelectedStepIds(prev => {
+              if (prev.includes(stepId)) {
+                  return prev.filter(id => id !== stepId);
+              } else {
+                  return [...prev, stepId];
+              }
+          });
+      };
+  
+      // Определяем колонки для DataGrid
+      const columns = [
+          {
+              field: 'selection',
+              headerName: 'Выбор',
+              width: 80,
+              renderCell: (params) => (
+                  <FormControlLabel
+                      control={
+                          <Checkbox
+                              checked={selectedStepIds.includes(params.row.step_id)}
+                              onChange={() => handleStepSelection(params.row.step_id)}
+                              name={`checkbox-${params.row.step_id}`}
+                          />
+                      }
+                      label=""
+                  />
+              ),
+          },
+          { field: 'step_id', headerName: 'ID шага', width: 100 },
+          { field: 'name', headerName: 'Название шага', width: 150 },
+          { field: 'completions', headerName: 'Завершения', type: 'number', width: 120 },
+          { field: 'dropouts', headerName: 'Отсевы', type: 'number', width: 100 },
+          { field: 'avg_time', headerName: 'Ср. время (сек)', type: 'number', width: 130 },
+          { field: 'success_rate', headerName: 'Успешность', width: 120 },
+          { field: 'avg_attempts', headerName: 'Ср. попытки', type: 'number', width: 120 },
+          { field: 'comments', headerName: 'Комментарии', type: 'number', width: 120 },
+          { field: 'question_freq', headerName: 'Частота "?"', width: 120 },
+          { field: 'self_correction_rate', headerName: 'Самокоррекция', width: 130 },
+          // Добавить кнопку/ссылку для перехода к StepAnalysis
+          {
+              field: 'actions',
+              headerName: 'Анализ',
+              sortable: false,
+              width: 120, // Немного увеличим ширину
+              renderCell: (params) => (
+                  // Используем RouterLink внутри Button для перехода
+                  <Button
+                      variant="outlined"
+                      size="small"
+                      component={RouterLink}
+                      to={`/step/${params.row.step_id}`} // Динамический путь к странице анализа
+                  >
+                      Детали
+                  </Button>
+              ),
+          },
+      ];
+  
+      if (!metrics || !stepData) {
+          return <div>Загрузка данных...</div>; // Или компонент лоадера
+      }
+  
+       const handleCompareSteps = () => {
+          if (selectedStepIds.length < 2) {
+              alert("Пожалуйста, выберите хотя бы два шага для сравнения.");
+              return;
+          }
+          // navigate(`/compare?steps=${selectedStepIds.join(',')}`); // Переход на страницу сравнения
+          //TODO: Сделайте переход на страницу сравнения
+      };
+  
+      return (
+          <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+              <Typography variant="h4" gutterBottom>
+                  Дашборд аналитики курса: {courseName}
+              </Typography>
+  
+              {/* Отображение глобальных метрик */}
+              <Grid container spacing={3} sx={{ mb: 3 }}>
+                  <Grid item xs={12} sm={4}>
+                      <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                          <Typography component="h2" variant="h6" color="primary" gutterBottom>
+                              Завершили курс
+                          </Typography>
+                          <Typography component="p" variant="h4">
+                              {(metrics.full_course_completion * 100).toFixed(1)}%
+                          </Typography>
+                      </Paper>
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                      <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                          <Typography component="h2" variant="h6" color="primary" gutterBottom>
+                              Средний % завершения
+                          </Typography>
+                          <Typography component="p" variant="h4">
+                               {(metrics.avg_completion_percent * 100).toFixed(1)}%
+                          </Typography>
+                      </Paper>
+                  </Grid>
+                   <Grid item xs={12} sm={4}>
+                      <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                          <Typography component="h2" variant="h6" color="primary" gutterBottom>
+                              Среднее время м/у шагами
+                          </Typography>
+                          <Typography component="p" variant="h4">
+                               {metrics.avg_time_between_steps} сек
+                          </Typography>
+                      </Paper>
+                  </Grid>
+              </Grid>
+  
+              {/* График */}
+              <Paper sx={{ p: 2, mb: 3 }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Статистика по шагам ({selectedMetric.label})</Typography>
+                      <MetricSelector
+                          metrics={availableMetrics}
+                          selectedMetric={selectedMetric}
+                          onChange={setSelectedMetric}
+                      />
+                  </Box>
+                   {/* Обертка для адаптивности графика */}
+                   <ResponsiveContainer width="100%" height={400}>
+                      <LineChart data={dataForChart} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          {/* Ось X с названиями шагов */}
+                          <XAxis dataKey="step" angle={-30} textAnchor="end" height={70} interval={0} />
+                          <YAxis />
+                          {/* Всплывающая подсказка при наведении */}
+                          <Tooltip />
+                          <Legend />
+                          {/* Линия графика */}
+                          <Line type="monotone" dataKey="value" name={selectedMetric.label} stroke="#8884d8" activeDot={{ r: 8 }} />
+                          {/* Линии для минимального и максимального значений */}
+                          {minValue !== Infinity && <ReferenceLine y={minValue} label={`Min: ${minValue}`} stroke="red" strokeDasharray="3 3" />}
+                          {maxValue !== -Infinity && <ReferenceLine y={maxValue} label={`Max: ${maxValue}`} stroke="green" strokeDasharray="3 3" />}
+                      </LineChart>
+                  </ResponsiveContainer>
+              </Paper>
+  
+              {/* Таблица с метриками по шагам */}
+              <Paper sx={{ height: 600, width: '100%', mb: 3 }}>
+                   <DataGrid
+                      rows={stepData}
+                      columns={columns}
+                      pageSize={10} // Количество строк на странице
+                      rowsPerPageOptions={[10, 25, 50]}
+                      checkboxSelection={false} // Отключаем чекбоксы, если не нужны
+                      disableSelectionOnClick // Отключаем выделение строки по клику
+                  />
+              </Paper>
+               <Box sx={{ mt: 2, textAlign: 'center' }}>
+                  <Button
+                      variant="contained"
+                      color="primary"
+                      size="large"
+                      onClick={handleCompareSteps}
+                      disabled={selectedStepIds.length < 2}
+                  >
+                      Сравнить выбранные шаги
+                  </Button>
+              </Box>
+  
+              {/* Рекомендации */}
+              <Recommendations />
+  
+          </Container>
+      );
+  }
+  
+  export default Dashboard;
