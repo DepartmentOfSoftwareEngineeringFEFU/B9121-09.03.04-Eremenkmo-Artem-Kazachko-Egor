@@ -1,4 +1,3 @@
-// frontend/src/components/Header.jsx
 import React from "react";
 import { Link as RouterLink } from "react-router-dom";
 import { AppBar, Toolbar, Typography, Button, Box } from "@mui/material";

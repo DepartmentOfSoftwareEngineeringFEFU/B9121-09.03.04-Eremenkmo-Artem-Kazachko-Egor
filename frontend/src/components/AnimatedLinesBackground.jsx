@@ -1,6 +1,5 @@
-// src/components/AnimatedLinesBackground.jsx
-import React, { useEffect, useRef } from 'react';
-import styled from '@emotion/styled';
+import React, { useEffect, useRef } from "react";
+import styled from "@emotion/styled";
 
 const AnimatedSVG = styled.svg`
   position: absolute;
@@ -17,8 +16,8 @@ const AnimatedPath = styled.path`
   stroke-width: 2;
   stroke: #5c62ec;
   fill: none;
-  stroke-dasharray: ${props => props.length};
-  stroke-dashoffset: ${props => props.length};
+  stroke-dasharray: ${(props) => props.length};
+  stroke-dashoffset: ${(props) => props.length};
   animation: dash 5s linear forwards;
 
   @keyframes dash {

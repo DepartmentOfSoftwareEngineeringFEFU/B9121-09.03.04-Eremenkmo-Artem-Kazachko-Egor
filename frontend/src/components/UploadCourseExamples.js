@@ -1,4 +1,4 @@
-// frontend/src/components/UploadCourseExamples.js (Новый файл для примеров)
+
 
 export const csvExamples = {
     learners: {

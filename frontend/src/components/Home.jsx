@@ -1,9 +1,8 @@
-// frontend/src/components/Home.jsx
 import React from "react";
 import { Typography, Container, Box, Button } from "@mui/material";
 import { styled } from "@mui/system";
 import AnimatedBackground from "./AnimatedBackground";
-import AnimatedLinesBackground from './AnimatedLinesBackground'; // Импортируем 
+import AnimatedLinesBackground from "./AnimatedLinesBackground"; // Импортируем
 const StyledButton = styled(Button)(({ theme }) => ({
   backgroundColor: theme.palette.primary.main,
   color: theme.palette.common.white,
