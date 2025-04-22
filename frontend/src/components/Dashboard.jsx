@@ -350,92 +350,66 @@ function Dashboard() {
   // Эффект для получения ID курса из URL и названия из localStorage
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const idFromUrlEncoded = params.get("courseId"); // Получаем закодированный ID
+    // Используем params.get(), который автоматически декодирует
+    const idFromUrlDecoded = params.get('courseId');
 
     console.log("--- Dashboard useEffect ---");
-    console.log("1. Закодированный ID из URL:", idFromUrlEncoded);
+    console.log("1. Декодированный ID из URL:", idFromUrlDecoded);
 
-    if (idFromUrlEncoded) {
-      // Сохраняем декодированный ID для использования в коде (если нужно)
-      const idFromUrlDecoded = decodeURIComponent(idFromUrlEncoded);
-      setCourseId(idFromUrlDecoded); // Сохраняем декодированный
+    if (idFromUrlDecoded) {
+        setCourseId(idFromUrlDecoded); // Сохраняем декодированный ID
 
-      setLoading(true); // Начинаем загрузку
-      setError(null); // Сбрасываем ошибки
+        setLoading(true);
+        setError(null);
 
-      // Получаем название курса из localStorage
-      const storedCourses = localStorage.getItem("uploadedCourses");
-      console.log("2. Данные из localStorage:", storedCourses);
+        const storedCourses = localStorage.getItem('uploadedCourses');
+        console.log("2. Данные из localStorage:", storedCourses);
 
-      let courses = [];
-      try {
-        courses = storedCourses ? JSON.parse(storedCourses) : [];
-        console.log("3. Распарсенные курсы:", courses);
-      } catch (e) {
-        console.error("Ошибка парсинга JSON из localStorage:", e);
-        setError("Ошибка чтения данных о курсах.");
-        setCourseTitle("Ошибка");
-        setLoading(false);
-        return; // Прерываем выполнение
-      }
+        let courses = [];
+        try {
+            courses = storedCourses ? JSON.parse(storedCourses) : [];
+            console.log("3. Распарсенные курсы:", courses);
+        } catch (e) {
+            console.error("Ошибка парсинга JSON из localStorage:", e);
+            setError('Ошибка чтения данных о курсах.');
+            setCourseTitle('Ошибка');
+            setLoading(false);
+            return;
+        }
 
-      // Ищем курс, сравнивая ЗАКОДИРОВАННЫЕ ID
-      const currentCourse = courses.find(
-        (course) => course.id === idFromUrlEncoded
-      );
-      console.log("4. Найденный курс:", currentCourse);
+        // Ищем курс, сравнивая ДЕКОДИРОВАННЫЙ ID из URL с ДЕКОДИРОВАННЫМ ID из localStorage
+        const currentCourse = courses.find(course => {
+            const localStorageIdDecoded = decodeURIComponent(course.id); // Декодируем ID из localStorage
+            console.log(`Сравнение: localStorage Decoded ID (${typeof localStorageIdDecoded}) "${localStorageIdDecoded}" === URL Decoded ID (${typeof idFromUrlDecoded}) "${idFromUrlDecoded}"`);
+            return localStorageIdDecoded === idFromUrlDecoded; // Сравниваем декодированные строки
+        });
+        console.log("4. Найденный курс:", currentCourse);
 
-      if (currentCourse) {
-        setCourseTitle(currentCourse.name);
-        console.log(`Найден курс: ${currentCourse.name}. Загрузка данных...`);
-
-        // --- Здесь должна быть логика загрузки реальных метрик для courseId ---
-        // const fetchMetricsForCourse = async (courseId) => {
-        //     try {
-        //         // Используйте реальный courseId (idFromUrlDecoded или idFromUrlEncoded,
-        //         // в зависимости от того, что ожидает ваш API)
-        //         const response = await fetch(`/api/metrics/${courseId}`);
-        //         if (!response.ok) throw new Error('Network response was not ok');
-        //         const data = await response.json();
-        //         setMetrics(data.global_metrics); // Предполагаем структуру ответа
-        //         setStepData(data.step_metrics); // Предполагаем структуру ответа
-        //         setLoading(false);
-        //     } catch (fetchError) {
-        //         console.error("Ошибка загрузки метрик:", fetchError);
-        //         setError('Не удалось загрузить метрики для курса.');
-        //         setMetrics(null);
-        //         setStepData([]);
-        //         setLoading(false);
-        //     }
-        // };
-        // fetchMetricsForCourse(idFromUrlDecoded); // Вызываем загрузку данных
-        // --- Конец логики загрузки реальных данных ---
-
-        // Пока используем mock-данные с имитацией задержки
-        setTimeout(() => {
-          setMetrics(mockMetrics);
-          setStepData(generateMockStepData(mockMetrics));
-          setLoading(false);
-        }, 500);
-      } else {
-        setCourseTitle("Курс не найден");
-        console.error(
-          `Курс с ID "${idFromUrlEncoded}" не найден в localStorage.`
-        );
-        setError(`Курс с ID "${idFromUrlDecoded}" не найден.`); // Показываем декодированный ID пользователю
-        setMetrics(null);
-        setStepData([]);
-        setLoading(false);
-      }
+        if (currentCourse) {
+            setCourseTitle(currentCourse.name);
+            console.log(`Найден курс: ${currentCourse.name}. Загрузка данных...`);
+            setTimeout(() => {
+                setMetrics(mockMetrics);
+                setStepData(generateMockStepData(mockMetrics));
+                setLoading(false);
+            }, 500);
+        } else {
+            setCourseTitle('Курс не найден');
+            console.error(`Курс с ID "${idFromUrlDecoded}" не найден.`);
+            setError(`Курс с ID "${idFromUrlDecoded}" не найден.`);
+            setMetrics(null);
+            setStepData([]);
+            setLoading(false);
+        }
     } else {
-      setCourseTitle("Курс не выбран");
-      console.warn("ID курса не найден в URL.");
-      setError("Не указан ID курса в адресе страницы.");
-      setMetrics(null);
-      setStepData([]);
-      setLoading(false);
+         setCourseTitle('Курс не выбран');
+         console.warn("ID курса не найден в URL.");
+         setError("Не указан ID курса в адресе страницы.");
+         setMetrics(null);
+         setStepData([]);
+         setLoading(false);
     }
-  }, [location.search]); // Зависимость от location.search
+}, [location.search]); // Зависимость от location.search
 
   // Подготовка данных для графика
   const dataForChart = stepData.map((item) => ({
