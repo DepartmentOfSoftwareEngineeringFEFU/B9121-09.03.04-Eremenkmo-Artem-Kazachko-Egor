@@ -1,10 +1,11 @@
 import React from "react";
-import { useParams } from "react-router-dom";
-import { Container, Typography, Paper, Box } from "@mui/material";
+import { useParams, useNavigate } from "react-router-dom";
+import { Container, Typography, Paper, Box, Button } from "@mui/material";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 
 function StepAnalysis() {
   const { stepId } = useParams(); // Получаем stepId из URL
-
+  const navigate = useNavigate();
   // Mock-данные для примера (заменить на реальные данные с API)
   const mockStepData = {
     step_id: stepId,
@@ -17,10 +18,19 @@ function StepAnalysis() {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Typography variant="h4" gutterBottom>
-        Анализ шага {mockStepData.name} (ID: {mockStepData.step_id})
-      </Typography>
-
+      <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
+        <Button
+          variant="outlined"
+          startIcon={<ArrowBackIcon />}
+          onClick={() => navigate(-1)} // Переход на предыдущую страницу истории
+          sx={{ mr: 2 }} // Добавляем отступ справа
+        >
+          Назад к Дашборду
+        </Button>
+        <Typography variant="h4" gutterBottom>
+          Анализ шага {mockStepData.name} (ID: {mockStepData.step_id})
+        </Typography>
+      </Box>
       <Paper sx={{ p: 2, mb: 3 }}>
         <Typography variant="h6" gutterBottom>
           Сильные стороны

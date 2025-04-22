@@ -1,5 +1,6 @@
+// frontend/src/components/Dashboard.jsx
 import React, { useState, useEffect } from "react";
-import { useLocation, Link as RouterLink } from "react-router-dom";
+import { useLocation, Link as RouterLink, useNavigate } from "react-router-dom"; // Добавляем useNavigate
 import {
   Container,
   Typography,
@@ -9,6 +10,8 @@ import {
   Button,
   Checkbox,
   FormControlLabel,
+  CircularProgress,
+  Alert,
 } from "@mui/material";
 import { DataGrid } from "@mui/x-data-grid";
 import {
@@ -23,10 +26,11 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-import MetricSelector from "./MetricSelector";
-import Recommendations from "./Recommendations";
+// Импорт компонентов-заглушек
+import MetricSelector from "./MetricSelector"; // Убедитесь, что путь правильный
+import Recommendations from "./Recommendations"; // Убедитесь, что путь правильный
 
-// --- Вставьте сюда ваши mock-данные ---
+// --- Mock-данные (оставлены для примера, будут заменяться реальными) ---
 const mockMetrics = {
   completions_per_step: {
     157554: 12000,
@@ -282,29 +286,40 @@ const mockMetrics = {
 };
 
 const generateMockStepData = (metrics) => {
+  if (!metrics || !metrics.completions_per_step) return []; // Проверка на наличие данных
   const stepIds = Object.keys(metrics.completions_per_step);
   return stepIds.map((stepId, index) => {
     const id = parseInt(stepId, 10);
+    // Проверки на undefined для более надежной работы
+    const successRate = metrics.success_rate?.[id];
+    const questionFreq = metrics.question_freq?.[id];
+    const selfCorrectionRate = metrics.self_correction_rate?.[id];
+
     return {
-      id: index + 1, // Уникальный ID для DataGrid
+      id: index + 1, // ID для DataGrid
       step_id: id,
-      name: `Шаг ${id}`, // Пока используем ID в названии
+      name: `Шаг ${id}`,
       completions: metrics.completions_per_step[id] || 0,
-      dropouts: metrics.dropouts_per_step[id] || 0,
-      avg_time: metrics.avg_time_per_step[id] || 0,
-      success_rate: (metrics.success_rate[id] * 100).toFixed(1) + "%" || "0%", // Форматируем для отображения
-      avg_attempts: metrics.avg_attempts[id] || 0,
-      comments: metrics.comments_per_step[id] || 0,
-      question_freq: (metrics.question_freq[id] * 100).toFixed(1) + "%" || "0%", // Форматируем для отображения
+      dropouts: metrics.dropouts_per_step?.[id] || 0,
+      avg_time: metrics.avg_time_per_step?.[id] || 0,
+      success_rate:
+        successRate !== undefined
+          ? (successRate * 100).toFixed(1) + "%"
+          : "N/A",
+      avg_attempts: metrics.avg_attempts?.[id] || 0,
+      comments: metrics.comments_per_step?.[id] || 0,
+      question_freq:
+        questionFreq !== undefined
+          ? (questionFreq * 100).toFixed(1) + "%"
+          : "N/A",
       self_correction_rate:
-        (metrics.self_correction_rate[id] * 100).toFixed(1) + "%" || "0%", // Форматируем для отображения
+        selfCorrectionRate !== undefined
+          ? (selfCorrectionRate * 100).toFixed(1) + "%"
+          : "N/A",
     };
   });
 };
-const mockStepData = generateMockStepData(mockMetrics);
-// --- Конец mock-данных ---
 
-// Определяем доступные метрики для выбора
 const availableMetrics = [
   { value: "completions", label: "Завершения", dataKey: "completions" },
   { value: "dropouts", label: "Отсевы", dataKey: "dropouts" },
@@ -314,39 +329,41 @@ const availableMetrics = [
     label: "Среднее число попыток",
     dataKey: "avg_attempts",
   },
+  { value: "comments", label: "Комментарии", dataKey: "comments" },
   // Добавьте другие метрики при необходимости
 ];
+// --- Конец Mock-данных ---
 
 function Dashboard() {
+  const navigate = useNavigate(); // Инициализируем navigate
   const location = useLocation();
   const [courseId, setCourseId] = useState(null); // Состояние для ID курса
   const [courseTitle, setCourseTitle] = useState("Загрузка..."); // Состояние для заголовка
+  const [loading, setLoading] = useState(true); // Состояние загрузки данных
+  const [error, setError] = useState(null); // Состояние для ошибок
 
-  const [metrics, setMetrics] = useState(mockMetrics); // Пока используем mock
-  const [stepData, setStepData] = useState(mockStepData); // Пока используем mock
+  const [metrics, setMetrics] = useState(null); // Изначально null
+  const [stepData, setStepData] = useState([]); // Изначально пустой массив
   const [selectedMetric, setSelectedMetric] = useState(availableMetrics[0]);
-  const [selectedStepIds, setSelectedStepIds] = useState([]);
+  const [selectedStepIds, setSelectedStepIds] = useState([]); // Состояние для хранения выбранных ID шагов
 
-  // --- Эффект для получения ID курса из URL и названия из localStorage ---
+  // Эффект для получения ID курса из URL и названия из localStorage
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    // Получаем закодированное значение напрямую, если это возможно (зависит от реализации роутера/браузера)
-    // Более надежный способ - извлечь значение вручную
-    const searchParamsString = location.search; // Получаем строку "?courseId=..."
-    let idFromUrlEncoded = null;
-    if (searchParamsString.includes("courseId=")) {
-      // Извлекаем значение параметра courseId как есть (закодированное)
-      idFromUrlEncoded = searchParamsString.split("courseId=")[1].split("&")[0];
-    }
+    const idFromUrlEncoded = params.get("courseId"); // Получаем закодированный ID
 
     console.log("--- Dashboard useEffect ---");
     console.log("1. Закодированный ID из URL:", idFromUrlEncoded);
 
     if (idFromUrlEncoded) {
-      // Сохраняем декодированный ID для отображения или других нужд, если нужно
+      // Сохраняем декодированный ID для использования в коде (если нужно)
       const idFromUrlDecoded = decodeURIComponent(idFromUrlEncoded);
-      setCourseId(idFromUrlDecoded); // Сохраняем декодированный ID
+      setCourseId(idFromUrlDecoded); // Сохраняем декодированный
 
+      setLoading(true); // Начинаем загрузку
+      setError(null); // Сбрасываем ошибки
+
+      // Получаем название курса из localStorage
       const storedCourses = localStorage.getItem("uploadedCourses");
       console.log("2. Данные из localStorage:", storedCourses);
 
@@ -356,48 +373,79 @@ function Dashboard() {
         console.log("3. Распарсенные курсы:", courses);
       } catch (e) {
         console.error("Ошибка парсинга JSON из localStorage:", e);
-        setCourseTitle("Ошибка чтения данных");
-        setMetrics(null);
-        setStepData([]);
-        return;
+        setError("Ошибка чтения данных о курсах.");
+        setCourseTitle("Ошибка");
+        setLoading(false);
+        return; // Прерываем выполнение
       }
 
       // Ищем курс, сравнивая ЗАКОДИРОВАННЫЕ ID
-      const currentCourse = courses.find((course) => {
-        console.log(
-          `Сравнение: localStorage ID (${typeof course.id}) "${
-            course.id
-          }" === URL Encoded ID (${typeof idFromUrlEncoded}) "${idFromUrlEncoded}"`
-        );
-        return course.id === idFromUrlEncoded; // Сравниваем закодированные строки
-      });
+      const currentCourse = courses.find(
+        (course) => course.id === idFromUrlEncoded
+      );
       console.log("4. Найденный курс:", currentCourse);
 
       if (currentCourse) {
-        setCourseTitle(currentCourse.name); // Название берем из найденного курса
+        setCourseTitle(currentCourse.name);
         console.log(`Найден курс: ${currentCourse.name}. Загрузка данных...`);
-        setMetrics(mockMetrics);
-        setStepData(generateMockStepData(mockMetrics));
+
+        // --- Здесь должна быть логика загрузки реальных метрик для courseId ---
+        // const fetchMetricsForCourse = async (courseId) => {
+        //     try {
+        //         // Используйте реальный courseId (idFromUrlDecoded или idFromUrlEncoded,
+        //         // в зависимости от того, что ожидает ваш API)
+        //         const response = await fetch(`/api/metrics/${courseId}`);
+        //         if (!response.ok) throw new Error('Network response was not ok');
+        //         const data = await response.json();
+        //         setMetrics(data.global_metrics); // Предполагаем структуру ответа
+        //         setStepData(data.step_metrics); // Предполагаем структуру ответа
+        //         setLoading(false);
+        //     } catch (fetchError) {
+        //         console.error("Ошибка загрузки метрик:", fetchError);
+        //         setError('Не удалось загрузить метрики для курса.');
+        //         setMetrics(null);
+        //         setStepData([]);
+        //         setLoading(false);
+        //     }
+        // };
+        // fetchMetricsForCourse(idFromUrlDecoded); // Вызываем загрузку данных
+        // --- Конец логики загрузки реальных данных ---
+
+        // Пока используем mock-данные с имитацией задержки
+        setTimeout(() => {
+          setMetrics(mockMetrics);
+          setStepData(generateMockStepData(mockMetrics));
+          setLoading(false);
+        }, 500);
       } else {
         setCourseTitle("Курс не найден");
         console.error(
           `Курс с ID "${idFromUrlEncoded}" не найден в localStorage.`
         );
+        setError(`Курс с ID "${idFromUrlDecoded}" не найден.`); // Показываем декодированный ID пользователю
         setMetrics(null);
         setStepData([]);
+        setLoading(false);
       }
     } else {
       setCourseTitle("Курс не выбран");
       console.warn("ID курса не найден в URL.");
+      setError("Не указан ID курса в адресе страницы.");
       setMetrics(null);
       setStepData([]);
+      setLoading(false);
     }
-  }, [location.search]);
+  }, [location.search]); // Зависимость от location.search
 
   // Подготовка данных для графика
   const dataForChart = stepData.map((item) => ({
     step: item.name,
-    value: item[selectedMetric.dataKey],
+    // Преобразуем строку с '%' обратно в число для графика, если нужно
+    value:
+      typeof item[selectedMetric.dataKey] === "string" &&
+      item[selectedMetric.dataKey].includes("%")
+        ? parseFloat(item[selectedMetric.dataKey]) / 100
+        : item[selectedMetric.dataKey],
   }));
 
   const valuesForChart = dataForChart
@@ -411,6 +459,13 @@ function Dashboard() {
       if (prev.includes(stepId)) {
         return prev.filter((id) => id !== stepId);
       } else {
+        // Ограничение на количество выбранных шагов (например, макс. 5)
+        // if (prev.length < 5) {
+        //     return [...prev, stepId];
+        // } else {
+        //     alert("Можно выбрать не более 5 шагов для сравнения.");
+        //     return prev;
+        // }
         return [...prev, stepId];
       }
     });
@@ -422,12 +477,16 @@ function Dashboard() {
       field: "selection",
       headerName: "Выбор",
       width: 80,
+      sortable: false,
       renderCell: (params) => (
         <FormControlLabel
+          sx={{ mr: 0 }} // Убираем правый отступ у label
           control={
             <Checkbox
+              size="small"
               checked={selectedStepIds.includes(params.row.step_id)}
               onChange={() => handleStepSelection(params.row.step_id)}
+              name={`checkbox-${params.row.step_id}`}
             />
           }
           label=""
@@ -436,7 +495,6 @@ function Dashboard() {
     },
     { field: "step_id", headerName: "ID шага", width: 100 },
     { field: "name", headerName: "Название шага", width: 150 },
-    // ... другие колонки ...
     {
       field: "completions",
       headerName: "Завершения",
@@ -475,33 +533,53 @@ function Dashboard() {
           variant="outlined"
           size="small"
           component={RouterLink}
-          to={`/step/${params.row.step_id}`}
+          to={`/step/${params.row.step_id}?courseId=${encodeURIComponent(
+            courseId
+          )}`}
         >
+          {" "}
+          {/* Передаем courseId */}
           Детали
         </Button>
       ),
     },
   ];
 
+  // Обновленная функция для сравнения шагов
   const handleCompareSteps = () => {
     if (selectedStepIds.length < 2) {
       alert("Пожалуйста, выберите хотя бы два шага для сравнения.");
       return;
     }
-    // TODO: Реализовать переход на страницу сравнения
-    console.log("Сравнение шагов:", selectedStepIds);
-    // navigate(`/compare?courseId=${courseId}&steps=${selectedStepIds.join(',')}`);
+    // Формируем строку с ID шагов, разделенными запятыми
+    const stepsQueryParam = selectedStepIds.join(",");
+    // Переходим на страницу сравнения, передавая courseId (закодированный!) и steps
+    const encodedCourseId = encodeURIComponent(courseId); // Используем courseId из состояния
+    navigate(`/compare?courseId=${encodedCourseId}&steps=${stepsQueryParam}`);
+    console.log(
+      "Переход на сравнение шагов:",
+      selectedStepIds,
+      "для курса ID:",
+      encodedCourseId
+    );
   };
 
   // --- Отображение лоадера или ошибки, если данных нет ---
-  if (!metrics || !stepData) {
+  if (loading) {
+    return (
+      <Container
+        maxWidth="lg"
+        sx={{ mt: 4, mb: 4, display: "flex", justifyContent: "center" }}
+      >
+        <CircularProgress />
+      </Container>
+    );
+  }
+
+  if (error) {
     return (
       <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-        <Typography variant="h4" gutterBottom>
-          Дашборд аналитики курса: {courseTitle}
-        </Typography>
-        <Typography>Загрузка данных...</Typography>
-        {/* Или отображение сообщения об ошибке, если курс не найден */}
+        <Alert severity="error">{error}</Alert>
       </Container>
     );
   }
@@ -515,167 +593,186 @@ function Dashboard() {
       </Typography>
 
       {/* Отображение глобальных метрик */}
-      <Grid container spacing={3} sx={{ mb: 3 }}>
-        {/* ... код глобальных метрик ... */}
-        <Grid item xs={12} sm={4}>
-          <Paper
-            sx={{
-              p: 2,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-            }}
-          >
-            <Typography
-              component="h2"
-              variant="h6"
-              color="primary"
-              gutterBottom
+      {metrics && ( // Показываем только если метрики загружены
+        <Grid container spacing={3} sx={{ mb: 3 }}>
+          <Grid item xs={12} sm={4}>
+            <Paper
+              sx={{
+                p: 2,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+              }}
             >
-              Завершили курс
-            </Typography>
-            <Typography component="p" variant="h4">
-              {(metrics.full_course_completion * 100).toFixed(1)}%
-            </Typography>
-          </Paper>
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          <Paper
-            sx={{
-              p: 2,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-            }}
-          >
-            <Typography
-              component="h2"
-              variant="h6"
-              color="primary"
-              gutterBottom
+              <Typography
+                component="h2"
+                variant="h6"
+                color="primary"
+                gutterBottom
+              >
+                Завершили курс
+              </Typography>
+              <Typography component="p" variant="h4">
+                {metrics.full_course_completion !== undefined
+                  ? `${(metrics.full_course_completion * 100).toFixed(1)}%`
+                  : "N/A"}
+              </Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} sm={4}>
+            <Paper
+              sx={{
+                p: 2,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+              }}
             >
-              Средний % завершения
-            </Typography>
-            <Typography component="p" variant="h4">
-              {(metrics.avg_completion_percent * 100).toFixed(1)}%
-            </Typography>
-          </Paper>
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          <Paper
-            sx={{
-              p: 2,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-            }}
-          >
-            <Typography
-              component="h2"
-              variant="h6"
-              color="primary"
-              gutterBottom
+              <Typography
+                component="h2"
+                variant="h6"
+                color="primary"
+                gutterBottom
+              >
+                Средний % завершения
+              </Typography>
+              <Typography component="p" variant="h4">
+                {metrics.avg_completion_percent !== undefined
+                  ? `${(metrics.avg_completion_percent * 100).toFixed(1)}%`
+                  : "N/A"}
+              </Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} sm={4}>
+            <Paper
+              sx={{
+                p: 2,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+              }}
             >
-              Среднее время м/у шагами
-            </Typography>
-            <Typography component="p" variant="h4">
-              {metrics.avg_time_between_steps} сек
-            </Typography>
-          </Paper>
+              <Typography
+                component="h2"
+                variant="h6"
+                color="primary"
+                gutterBottom
+              >
+                Среднее время м/у шагами
+              </Typography>
+              <Typography component="p" variant="h4">
+                {metrics.avg_time_between_steps !== undefined
+                  ? `${metrics.avg_time_between_steps} сек`
+                  : "N/A"}
+              </Typography>
+            </Paper>
+          </Grid>
         </Grid>
-      </Grid>
+      )}
 
       {/* График */}
-      <Paper sx={{ p: 2, mb: 3 }}>
-        {/* ... код графика ... */}
-        <Box
-          sx={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            mb: 2,
-          }}
-        >
-          <Typography variant="h6">
-            Статистика по шагам ({selectedMetric.label})
-          </Typography>
-          <MetricSelector
-            metrics={availableMetrics}
-            selectedMetric={selectedMetric}
-            onChange={setSelectedMetric}
-          />
-        </Box>
-        {/* Обертка для адаптивности графика */}
-        <ResponsiveContainer width="100%" height={400}>
-          <LineChart
-            data={dataForChart}
-            margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+      {stepData.length > 0 && ( // Показываем только если есть данные для шагов
+        <Paper sx={{ p: 2, mb: 3 }}>
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              mb: 2,
+            }}
           >
-            <CartesianGrid strokeDasharray="3 3" />
-            {/* Ось X с названиями шагов */}
-            <XAxis
-              dataKey="step"
-              angle={-30}
-              textAnchor="end"
-              height={70}
-              interval={0}
+            <Typography variant="h6">
+              Статистика по шагам ({selectedMetric.label})
+            </Typography>
+            <MetricSelector
+              metrics={availableMetrics}
+              selectedMetric={selectedMetric}
+              onChange={setSelectedMetric}
             />
-            <YAxis />
-            {/* Всплывающая подсказка при наведении */}
-            <Tooltip />
-            <Legend />
-            {/* Линия графика */}
-            <Line
-              type="monotone"
-              dataKey="value"
-              name={selectedMetric.label}
-              stroke="#8884d8"
-              activeDot={{ r: 8 }}
-            />
-            {/* Линии для минимального и максимального значений */}
-            {minValue !== Infinity && (
-              <ReferenceLine
-                y={minValue}
-                label={`Min: ${minValue}`}
-                stroke="red"
-                strokeDasharray="3 3"
+          </Box>
+          <ResponsiveContainer width="100%" height={400}>
+            <LineChart
+              data={dataForChart}
+              margin={{ top: 5, right: 30, left: 20, bottom: 70 }}
+            >
+              {" "}
+              {/* Увеличили bottom margin */}
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="step"
+                angle={-45}
+                textAnchor="end"
+                height={80}
+                interval={0}
+              />{" "}
+              {/* Настроили угол и высоту */}
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey="value"
+                name={selectedMetric.label}
+                stroke="#8884d8"
+                activeDot={{ r: 8 }}
               />
-            )}
-            {maxValue !== -Infinity && (
-              <ReferenceLine
-                y={maxValue}
-                label={`Max: ${maxValue}`}
-                stroke="green"
-                strokeDasharray="3 3"
-              />
-            )}
-          </LineChart>
-        </ResponsiveContainer>
-      </Paper>
+              {minValue !== Infinity && (
+                <ReferenceLine
+                  y={minValue}
+                  label={{
+                    value: `Min: ${minValue}`,
+                    position: "insideTopLeft",
+                  }}
+                  stroke="red"
+                  strokeDasharray="3 3"
+                />
+              )}
+              {maxValue !== -Infinity && (
+                <ReferenceLine
+                  y={maxValue}
+                  label={{
+                    value: `Max: ${maxValue}`,
+                    position: "insideTopRight",
+                  }}
+                  stroke="green"
+                  strokeDasharray="3 3"
+                />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </Paper>
+      )}
 
       {/* Таблица с метриками по шагам */}
-      <Paper sx={{ height: 600, width: "100%", mb: 3 }}>
-        <DataGrid
-          rows={stepData}
-          columns={columns}
-          pageSize={10}
-          rowsPerPageOptions={[10, 25, 50]}
-          checkboxSelection={false}
-          disableSelectionOnClick
-          getRowId={(row) => row.step_id} // Используем step_id как ID строки
-        />
-      </Paper>
-      <Box sx={{ mt: 2, textAlign: "center" }}>
-        <Button
-          variant="contained"
-          color="primary"
-          size="large"
-          onClick={handleCompareSteps}
-          disabled={selectedStepIds.length < 2}
-        >
-          Сравнить выбранные шаги
-        </Button>
-      </Box>
+      {stepData.length > 0 && ( // Показываем только если есть данные для шагов
+        <>
+          <Paper sx={{ height: 600, width: "100%", mb: 3 }}>
+            <DataGrid
+              // Используем step_id как ID строки
+              getRowId={(row) => row.step_id}
+              rows={stepData}
+              columns={columns}
+              pageSize={10}
+              rowsPerPageOptions={[10, 25, 50]}
+              checkboxSelection={false} // Используем кастомные чекбоксы
+              disableSelectionOnClick
+            />
+          </Paper>
+          {/* Кнопка сравнения */}
+          <Box sx={{ mt: 2, mb: 3, textAlign: "center" }}>
+            <Button
+              variant="contained"
+              color="primary"
+              size="large"
+              onClick={handleCompareSteps}
+              disabled={selectedStepIds.length < 2} // Деактивируем, если выбрано меньше 2
+            >
+              Сравнить выбранные шаги ({selectedStepIds.length}){" "}
+              {/* Показываем кол-во выбранных */}
+            </Button>
+          </Box>
+        </>
+      )}
 
       {/* Рекомендации */}
       <Recommendations />

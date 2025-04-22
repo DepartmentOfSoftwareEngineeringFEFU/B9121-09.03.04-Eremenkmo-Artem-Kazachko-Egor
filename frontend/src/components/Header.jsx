@@ -21,30 +21,34 @@ const StyledButton = styled(Button)(({ theme }) => ({
 function Header() {
   return (
     <StyledAppBar position="static">
-      {" "}
-      {/* Используем стилизованный компонент */}
       <Toolbar>
-        {/* Логотип или название */}
+        {/* Оборачиваем логотип в RouterLink */}
         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          Course
-          <Typography variant="h6" component="span" sx={{ color: "#5c62ec" }}>
-            Analytics
-          </Typography>
+          <RouterLink
+            to="/"
+            style={{ textDecoration: "none", color: "inherit" }}
+          >
+            {" "}
+            {/* Стили для ссылки */}
+            Course
+            <Typography variant="h6" component="span" sx={{ color: "#5c62ec" }}>
+              Analytics
+            </Typography>
+          </RouterLink>
         </Typography>
 
         {/* Навигационные кнопки */}
         <Box>
+          {/* ... кнопки ... */}
           <StyledButton color="inherit" component={RouterLink} to="/">
             Главная
           </StyledButton>
           <StyledButton color="inherit" component={RouterLink} to="/upload">
             Загрузить
           </StyledButton>
-          {/* Можно добавить ссылку на Dashboard, если нужен прямой переход */}
           <StyledButton color="inherit" component={RouterLink} to="/dashboard">
             Дашборд
           </StyledButton>
-          {/* Кнопка регистрации (заглушка) */}
           <StyledButton color="inherit" disabled>
             Регистрация
           </StyledButton>
