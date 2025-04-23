@@ -5,13 +5,12 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_admin import Admin
 from flask_admin.contrib.sqla import ModelView
-
+from .models import db, Module, Lesson, Step, Learner, Submission, Comment
+from .metric_routes import metrics_bp
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:1106@localhost/learning_plat_test_two'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:1106@localhost/learning_plat_test_three'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-db = SQLAlchemy()
 
 def create_database_if_not_exists(database_name, user, password, host='localhost'):
     connection = pymysql.connect(
@@ -25,70 +24,8 @@ def create_database_if_not_exists(database_name, user, password, host='localhost
 
 
 # Проверка и создание базы данных перед её использованием
-create_database_if_not_exists('learning_plat_test_two', user='root', password='1106')
+create_database_if_not_exists('learning_plat_test_three', user='root', password='1106')
 db.init_app(app)
-
-class Module(db.Model):
-    __tablename__ = 'module'
-    module_id = db.Column(db.Integer, primary_key=True)
-    module_position = db.Column(db.Integer, nullable=False)
-
-
-class Lesson(db.Model):
-    __tablename__ = 'lesson'
-    lesson_id = db.Column(db.Integer, primary_key=True)
-    lesson_position = db.Column(db.Integer, nullable=False)
-    module_id = db.Column(db.Integer, db.ForeignKey('module.module_id'), nullable=True)
-    module = db.relationship('Module', backref=db.backref('lessons', lazy=True))
-
-
-class Step(db.Model):
-    __tablename__ = 'step'
-    step_id = db.Column(db.Integer, primary_key=True)
-    step_position = db.Column(db.Integer, nullable=False)
-    step_type = db.Column(db.String(255), nullable=True)
-    step_cost = db.Column(db.Integer, nullable=True)
-    lesson_id = db.Column(db.Integer, db.ForeignKey('lesson.lesson_id'), nullable=True)
-    lesson = db.relationship('Lesson', backref=db.backref('steps', lazy=True))
-
-
-class Learner(db.Model):
-    __tablename__ = 'learner'
-    user_id = db.Column(db.Integer, primary_key=True)
-    last_name = db.Column(db.String(255), nullable=True)
-    first_name = db.Column(db.String(255), nullable=True)
-    last_login = db.Column(db.DateTime, nullable=True)
-    data_joined = db.Column(db.DateTime, nullable=True)
-    date_usual_certificate = db.Column(db.Date, nullable=True)
-    date_exellent_certificate = db.Column(db.Date, nullable=True)
-    is_learner = db.Column(db.Boolean, nullable=False, default=True)
-
-
-class Submission(db.Model):
-    __tablename__ = 'submission'
-    submission_id = db.Column(db.Integer, primary_key=True)
-    step_id = db.Column(db.Integer, db.ForeignKey('step.step_id'), nullable=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('learner.user_id'), nullable=True)
-    attempt_time = db.Column(db.DateTime, nullable=True)
-    submission_time = db.Column(db.DateTime, nullable=True)
-    status = db.Column(db.String(255), nullable=True)
-    score = db.Column(db.Integer, nullable=True)
-    step = db.relationship('Step', backref=db.backref('submissions', lazy=True))
-    user = db.relationship('Learner', backref=db.backref('submissions', lazy=True))
-
-
-class Comment(db.Model):
-    __tablename__ = 'comment'
-    comment_id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('learner.user_id'), nullable=True)
-    step_id = db.Column(db.Integer, db.ForeignKey('step.step_id'), nullable=True)
-    parent_comment_id = db.Column(db.Integer, db.ForeignKey('comment.comment_id'), nullable=True)
-    time = db.Column(db.DateTime, nullable=True)
-    deleted = db.Column(db.Boolean, nullable=True)
-    text_clear = db.Column(db.Text, nullable=True)
-    user = db.relationship('Learner', backref=db.backref('comments', lazy=True))
-    step = db.relationship('Step', backref=db.backref('comments', lazy=True))
-    parent_comment = db.relationship('Comment', remote_side=[comment_id], backref='replies')
 
 #--------------------------------------------------------------------------------------------------------#
 
@@ -107,7 +44,7 @@ def parse_datetime(date_str):
             timestamp = int(date_str)
             return datetime.fromtimestamp(timestamp)
 
-def import_learners(limit=5000):
+def import_learners(limit=15000):
     with open('backend/learners.csv', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         next(reader)
@@ -128,7 +65,7 @@ def import_learners(limit=5000):
         db.session.commit()
     print(f"----------Импортировано {min(limit, idx)} записей из learners.csv.")
 
-def import_structure(limit=5000):
+def import_structure(limit=15000):
     with open('backend/structure.csv', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         next(reader)
@@ -171,7 +108,7 @@ def import_structure(limit=5000):
     print(f"----------Импортировано {min(limit, idx + 1)} записей из structure.csv")
 
 
-def import_comments(limit=5000):
+def import_comments(limit=15000):
     with open('backend/comments.csv', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         next(reader)
@@ -211,7 +148,7 @@ def import_comments(limit=5000):
     print(f"----------Импортировано {min(limit, idx + 1)} комментариев из comments.csv.")
 
 
-def import_submissions(limit=5000):
+def import_submissions(limit=15000):
     with open('backend/submissions.csv', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         next(reader)
@@ -255,6 +192,9 @@ with app.app_context():
     import_structure()
     import_comments()
     import_submissions()
+
+# Регистрация Blueprint с метриками
+app.register_blueprint(metrics_bp)
 
 # Для просмотра таблиц в браузере: после загрузки данных он выдаст адрес, к нему добавляем /admin
 class MyModelView(ModelView):
