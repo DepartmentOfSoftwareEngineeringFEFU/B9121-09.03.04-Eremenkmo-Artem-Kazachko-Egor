@@ -1,6 +1,6 @@
 // src/components/AnimatedBackground.jsx
-import React from 'react';
-import styled from '@emotion/styled';
+import React from "react";
+import styled from "@emotion/styled";
 
 const AnimatedSVG = styled.svg`
   position: absolute;
@@ -29,7 +29,7 @@ const RotateLine = styled.line`
 
 function AnimatedBackground() {
   const centerX = 100;
-  const centerY = 50;  // Уменьшаем centerY, чтобы поднять окружность
+  const centerY = 50; // Уменьшаем centerY, чтобы поднять окружность
   const radius = 40;
   const numberOfLines = 30;
 
@@ -44,7 +44,9 @@ function AnimatedBackground() {
   }
 
   return (
-    <AnimatedSVG viewBox="0 0 200 100"> {/* Изменяем viewBox под centerY */}
+    <AnimatedSVG viewBox="0 0 200 100">
+      {" "}
+      {/* Изменяем viewBox под centerY */}
       {lines.map((line, index) => (
         <RotateLine
           key={index}

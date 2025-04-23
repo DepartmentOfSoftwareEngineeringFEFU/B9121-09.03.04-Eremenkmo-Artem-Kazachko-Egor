@@ -407,14 +407,6 @@ function StepComparison() {
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate(-1)} // Переход на предыдущую страницу истории
-          sx={{ mr: 2 }} // Добавляем отступ справа
-        >
-          Назад к Дашборду
-        </Button>
         <Typography variant="h4" gutterBottom>
           {/* Отображаем название курса из состояния courseTitle */}
           Сравнение шагов курса: {courseTitle}
