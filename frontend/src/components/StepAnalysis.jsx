@@ -28,7 +28,7 @@ function StepAnalysis() {
           Назад к Дашборду
         </Button>
         <Typography variant="h4" gutterBottom>
-          Анализ шага {mockStepData.name} (ID: {mockStepData.step_id})
+          Анализ шага: {mockStepData.name} 
         </Typography>
       </Box>
       <Paper sx={{ p: 2, mb: 3 }}>

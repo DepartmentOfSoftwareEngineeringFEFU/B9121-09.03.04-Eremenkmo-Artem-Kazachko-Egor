@@ -44,12 +44,10 @@ function Header() {
             Главная
           </StyledButton>
           <StyledButton color="inherit" component={RouterLink} to="/upload">
-            Загрузить
+            Курсы
           </StyledButton>
-          <StyledButton color="inherit" component={RouterLink} to="/dashboard">
-            Дашборд
-          </StyledButton>
-          <StyledButton color="inherit" disabled>
+          
+          <StyledButton color="inherit" >
             Регистрация
           </StyledButton>
         </Box>
