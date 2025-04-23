@@ -1,5 +1,6 @@
 import pymysql
 import csv
+import sys
 from datetime import datetime
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
@@ -7,10 +8,25 @@ from flask_admin import Admin
 from flask_admin.contrib.sqla import ModelView
 from .models import db, Module, Lesson, Step, Learner, Submission, Comment
 from .metric_routes import metrics_bp
-
+from flask_cors import CORS
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:1106@localhost/learning_plat_test_three'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+CORS(app)
+# Увеличиваем максимальный размер поля для CSV
+# Попробуем увеличить до ~0.5 МБ 
+max_int = sys.maxsize
+decrement = True
+while decrement:
+    # Уменьшаем значение, пока оно не станет допустимым для field_size_limit
+    decrement = False
+    try:
+        csv.field_size_limit(max_int)
+    except OverflowError:
+        max_int = int(max_int / 10)
+        decrement = True
+
+print(f"----------CSV field size limit установлен на: {max_int}") # Лог для информации
 
 def create_database_if_not_exists(database_name, user, password, host='localhost'):
     connection = pymysql.connect(
@@ -45,7 +61,7 @@ def parse_datetime(date_str):
             return datetime.fromtimestamp(timestamp)
 
 def import_learners(limit=15000):
-    with open('backend/learners.csv', newline='', encoding='utf-8') as f:
+    with open('learners.csv', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         next(reader)
         for idx, item in enumerate(reader):
@@ -66,7 +82,7 @@ def import_learners(limit=15000):
     print(f"----------Импортировано {min(limit, idx)} записей из learners.csv.")
 
 def import_structure(limit=15000):
-    with open('backend/structure.csv', newline='', encoding='utf-8') as f:
+    with open('structure.csv', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         next(reader)
         for idx, item in enumerate(reader):
@@ -109,7 +125,7 @@ def import_structure(limit=15000):
 
 
 def import_comments(limit=15000):
-    with open('backend/comments.csv', newline='', encoding='utf-8') as f:
+    with open('comments.csv', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         next(reader)
         for idx, item in enumerate(reader):
@@ -149,7 +165,7 @@ def import_comments(limit=15000):
 
 
 def import_submissions(limit=15000):
-    with open('backend/submissions.csv', newline='', encoding='utf-8') as f:
+    with open('submissions.csv', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         next(reader)
         for idx, item in enumerate(reader):

@@ -1,6 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
-
+from sqlalchemy.dialects.mysql import LONGTEXT
 
 db = SQLAlchemy()
 
@@ -56,7 +56,7 @@ class Comment(db.Model):
     parent_comment_id = db.Column(db.Integer, db.ForeignKey('comment.comment_id'), nullable=True)
     time = db.Column(db.DateTime, nullable=True)
     deleted = db.Column(db.Boolean, nullable=True)
-    text_clear = db.Column(db.Text, nullable=True)
+    text_clear = db.Column(LONGTEXT, nullable=True)
     user = db.relationship('Learner', backref=db.backref('comments', lazy=True))
     step = db.relationship('Step', backref=db.backref('comments', lazy=True))
     parent_comment = db.relationship('Comment', remote_side=[comment_id], backref='replies')
