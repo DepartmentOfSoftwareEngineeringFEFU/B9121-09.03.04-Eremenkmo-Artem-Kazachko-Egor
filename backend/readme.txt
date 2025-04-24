@@ -7,8 +7,8 @@ http://127.0.0.1:5000/api/metrics/...
 Просмотр данных БД в онлайн формате:
 http://127.0.0.1:5000/admin/
 
-Если БД уже создана, закомменить строки 191-194 в dayabase.py:
-#import_learners()
-#import_structure()
-#import_comments()
-#import_submissions()
+Заполнение БД данными:
+python -m backend.seed_database
+
+Запуск сервера:
+python -m backend.database

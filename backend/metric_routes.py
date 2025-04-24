@@ -1,9 +1,97 @@
-from flask import Blueprint, jsonify, request, current_app
+import json
+import math
+from flask import Response, Blueprint, jsonify, request, current_app
 from .models import db, Submission, Learner, Step, Comment, Lesson, Module
 from sqlalchemy import func, distinct, case, cast, Float, text
-
+from .app_state import calculated_metrics_storage
 
 metrics_bp = Blueprint('metrics', __name__, url_prefix='/api/metrics')
+
+
+def calculate_global_metrics(storage):
+    """Рассчитывает глобальные метрики и сохраняет их в переданный словарь storage."""
+    print("    Расчет списка преподавателей...")
+    try:
+        teachers = db.session.query(Learner).filter(Learner.is_learner == False).order_by(Learner.last_name, Learner.first_name).all()
+        teacher_list = []
+        for teacher in teachers:
+            teacher_list.append({
+                "user_id": teacher.user_id, "first_name": teacher.first_name, "last_name": teacher.last_name,
+                "last_login": teacher.last_login.isoformat() if teacher.last_login else None,
+                "data_joined": teacher.data_joined.isoformat() if teacher.data_joined else None
+            })
+        storage['teachers'] = teacher_list # Сохраняем в хранилище
+        print(f"    Найдено преподавателей: {len(teacher_list)}")
+    except Exception as e:
+        print(f"!!! Ошибка при расчете списка преподавателей: {e}")
+        storage['teachers'] = {"error": "Could not calculate teachers", "details": str(e)}
+
+    print("    Расчет результативности курса (>= 80% порог)...")
+    try:
+        # Копируем логику расчета из эндпоинта сюда
+        submittable_steps_query = db.session.query(Step.step_id).filter(Step.step_cost.isnot(None), Step.step_cost > 0)
+        submittable_step_ids = [s.step_id for s in submittable_steps_query.all()]
+        total_learners = db.session.query(func.count(Learner.user_id)).scalar() or 0
+        completion_result = { # Готовим результат по умолчанию
+            "course_completion_rate_80_percent": 0.0, "users_completed_at_80_percent": 0, 
+            "total_learners": total_learners, "total_submittable_steps": 0, 
+            "threshold_steps_for_80_percent": 0, "message": "No calculation performed yet."
+        }
+        if not submittable_step_ids:
+            completion_result["message"] = "No steps requiring submission (step_cost > 0) found."
+            print("    Оцениваемые шаги не найдены.")
+        else:
+            total_submittable_steps = len(submittable_step_ids)
+            threshold_steps = math.ceil(total_submittable_steps * 0.80)
+            user_steps_passed_subquery = db.session.query(
+                Submission.user_id, func.count(distinct(Submission.step_id)).label('steps_passed_count')
+            ).filter(Submission.step_id.in_(submittable_step_ids), Submission.status == 'correct').group_by(Submission.user_id).subquery()
+            users_completed_course = db.session.query(func.count(user_steps_passed_subquery.c.user_id)).filter(
+                user_steps_passed_subquery.c.steps_passed_count >= threshold_steps).scalar() or 0
+            completion_rate = (float(users_completed_course) / float(total_learners)) if total_learners > 0 else 0.0
+            completion_result.update({ # Обновляем результат
+                "course_completion_rate_80_percent": completion_rate, 
+                "users_completed_at_80_percent": users_completed_course,
+                "total_submittable_steps": total_submittable_steps,
+                "threshold_steps_for_80_percent": threshold_steps,
+                "message": "Calculation successful."
+            })
+            print(f"    Результативность (>=80%): {completion_rate:.4f}, Прошли: {users_completed_course}, Порог: {threshold_steps}/{total_submittable_steps}")
+
+        storage['course_completion_rate_80'] = completion_result # Сохраняем в хранилище
+    except Exception as e:
+        print(f"!!! Ошибка при расчете результативности курса: {e}")
+        storage['course_completion_rate_80'] = {"error": "Could not calculate completion rate", "details": str(e)}
+
+# --- ИЗМЕНЕНИЕ ЭНДПОИНТОВ, ЧТОБЫ ОНИ БРАЛИ ДАННЫЕ ИЗ ХРАНИЛИЩА ---
+
+@metrics_bp.route("/teachers", methods=['GET'])
+def get_teachers():
+    """Возвращает ПРЕДВАРИТЕЛЬНО РАССЧИТАННЫЙ список преподавателей."""
+    # Просто возвращаем данные из хранилища
+    teachers_data = calculated_metrics_storage.get('teachers', {"error": "Teacher data not pre-calculated."})
+    
+    # Используем ручной json.dumps для контроля ensure_ascii
+    if isinstance(teachers_data, dict) and "error" in teachers_data:
+         json_string = json.dumps(teachers_data, ensure_ascii=False)
+         return Response(json_string, status=500, mimetype='application/json; charset=utf-8')
+    else:
+         json_string = json.dumps(teachers_data, ensure_ascii=False, indent=2)
+         return Response(json_string, mimetype='application/json; charset=utf-8')
+
+
+@metrics_bp.route("/course/completion_rate_80_percent", methods=['GET']) 
+def get_course_completion_rate_80_percent():
+    """Возвращает ПРЕДВАРИТЕЛЬНО РАССЧИТАННУЮ результативность курса (>= 80% порог)."""
+    # Просто возвращаем данные из хранилища
+    completion_data = calculated_metrics_storage.get('course_completion_rate_80', {"error": "Completion rate not pre-calculated."})
+    
+    if isinstance(completion_data, dict) and "error" in completion_data:
+        return jsonify(completion_data), 500
+    else:
+        return jsonify(completion_data)
+
+
 
 @metrics_bp.route("/step/<int:step_id>/users_passed", methods=['GET'])
 def get_users_passed_step(step_id):
@@ -105,48 +193,3 @@ def get_step_comments_count(step_id):
         .filter(Comment.step_id == step_id)\
         .scalar()
     return jsonify({"step_id": step_id, "comments_count": count or 0})
-
-
-
-@metrics_bp.route("/course/completion_rate", methods=['GET'])
-def get_course_completion_rate():
-    """Общая результативность курса (все шаги в БД)"""
-
-    all_steps = db.session.query(Step.step_id).all()
-    step_ids = [s.step_id for s in all_steps]
-
-    total_learners = db.session.query(func.count(Learner.user_id)).scalar() or 0
-
-    if not step_ids:
-        return jsonify({
-            "course_completion_rate": 0.0,
-            "users_completed": 0,
-            "total_learners": total_learners,
-            "total_steps_in_course": 0,
-            "message": "No steps found in the database."
-        })
-
-    total_steps_in_course = len(step_ids)
-
-    # Подзапрос: user_id и количество уникальных пройденных шагов для каждого
-    user_steps_passed_subquery = db.session.query(
-            Submission.user_id,
-            func.count(distinct(Submission.step_id)).label('steps_passed_count')
-        )\
-        .filter(Submission.step_id.in_(step_ids), Submission.status == 'correct')\
-        .group_by(Submission.user_id)\
-        .subquery()
-
-    # Основной запрос: считаем пользователей, у которых число пройденных шагов = общему числу шагов
-    users_completed_course = db.session.query(func.count(user_steps_passed_subquery.c.user_id))\
-        .filter(user_steps_passed_subquery.c.steps_passed_count == total_steps_in_course)\
-        .scalar() or 0 
-
-    completion_rate = (float(users_completed_course) / float(total_learners)) if total_learners > 0 else 0.0
-
-    return jsonify({
-        "course_completion_rate": completion_rate,
-        "users_completed": users_completed_course,
-        "total_learners": total_learners,
-        "total_steps_in_course": total_steps_in_course
-    })
