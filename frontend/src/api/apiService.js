@@ -82,10 +82,10 @@ const request = async (endpoint, options = {}) => {
  * Получение общей результативности курса.
  * @returns {Promise<{course_completion_rate: number, users_completed: number, total_learners: number, total_steps_in_course: number}>}
  */
-export const getCourseCompletionRate = () => {
+export const getCourseCompletionRate80Percent = () => {
     // Примечание: Текущий бэкенд эндпоинт считает по всей БД.
     // В будущем может потребоваться передавать courseId.
-    return request(`/metrics/course/completion_rate`);
+    return request(`/metrics/course/completion_rate_80_percent`);
 };
 
 /**
