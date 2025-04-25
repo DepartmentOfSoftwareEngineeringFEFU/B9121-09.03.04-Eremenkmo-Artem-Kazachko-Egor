@@ -2,5 +2,6 @@ comments.csv
 learners.csv
 structure.csv
 submissions.csv
+AdditionalInfo.xlsx
 venv/
 backend/venv/

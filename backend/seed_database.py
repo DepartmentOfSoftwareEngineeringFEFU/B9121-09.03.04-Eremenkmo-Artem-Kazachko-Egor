@@ -2,11 +2,14 @@ import csv
 import sys
 import pymysql
 from datetime import datetime
+import pandas as pd
+import math
 
 # Импортируем app для контекста, db и Модели
 # Предполагается, что database.py и models.py находятся в той же папке backend
 from backend.database import app, create_database_if_not_exists 
-from backend.models import db, Module, Lesson, Step, Learner, Submission, Comment
+from backend.models import db, Course, Module, Lesson, Step, Learner, Submission, Comment, AdditionalStepInfo, enrollment_table
+from sqlalchemy.exc import IntegrityError
 
 
 print("----------Настройка CSV field size limit...")
@@ -59,7 +62,7 @@ def parse_datetime(date_str):
                 return None
 
 
-def import_learners(limit=400000):
+def import_learners(limit=50000):
     print(f"----------Начало импорта learners (лимит: {limit})...")
     imported_count = 0
     skipped_count = 0
@@ -109,87 +112,136 @@ def import_learners(limit=400000):
          print(f"!!! КРИТИЧЕСКАЯ ОШИБКА при финальном коммите learners: {e}")
          db.session.rollback()
 
-def import_structure(limit=150000):
+def import_structure(limit=10000000):
+    """Импортирует структуру, создает курс и возвращает ID найденного курса."""
     print(f"----------Начало импорта structure (лимит: {limit})...")
-    modules_count, lessons_count, steps_count = 0, 0, 0
+    courses_count, modules_count, lessons_count, steps_count = 0, 0, 0, 0
     skipped_count = 0
     last_idx = 0
-    # Используем множества для отслеживания уже обработанных ID в этом запуске
-    processed_modules = set()
-    processed_lessons = set()
-    processed_steps = set()
-    
-    with open('backend/structure.csv', newline='', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        next(reader) # Пропуск заголовка
-        for idx, item in enumerate(reader):
-            last_idx = idx
-            if idx >= limit:
-                print(f"----------Достигнут лимит импорта ({limit}).")
-                break
+    processed_courses = set(); processed_modules = set(); processed_lessons = set(); processed_steps = set()
+    first_course_id_found = None # <--- Переменная для хранения первого найденного ID курса
 
-            if idx > 0 and idx % 10000 == 0:
-                print(f"----------Обработано {idx} строк из structure.csv...")
+    try: # Обернем весь импорт структуры
+        with open('backend/structure.csv', newline='', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            try: header = next(reader)
+            except StopIteration: print("!!! ОШИБКА: Файл structure.csv пуст."); return None
 
-            try:
-                # Парсинг ID
-                module_id = int(item[1])
-                lesson_id = int(item[3])
-                step_id = int(item[5])
-                
-                # Merge Module (если еще не обработан в этом запуске)
-                if module_id not in processed_modules:
-                    new_module = Module(module_id=module_id, module_position=int(item[2]))
-                    db.session.merge(new_module)
-                    processed_modules.add(module_id)
-                    modules_count += 1 # Считаем только первое добавление/обновление
+            # Ищем индекс колонки course_id
+            course_id_index = -1
+            try: course_id_index = header.index('course_id') # Простой поиск по точному имени
+            except ValueError:
+                 # Пытаемся найти регистронезависимо
+                 for i, col_name in enumerate(header):
+                     if col_name.strip().lower() == 'course_id': course_id_index = i; break
+            if course_id_index == -1:
+                print(f"!!! КРИТИЧЕСКАЯ ОШИБКА: Колонка 'course_id' не найдена в structure.csv. Заголовок: {header}"); return None
 
-                # Merge Lesson (если еще не обработан в этом запуске)
-                if lesson_id not in processed_lessons:
-                    new_lesson = Lesson(lesson_id=lesson_id, lesson_position=int(item[4]), module_id=module_id)
-                    db.session.merge(new_lesson)
-                    processed_lessons.add(lesson_id)
-                    lessons_count += 1
+            # Получаем остальные индексы (можно добавить проверки)
+            module_id_index = header.index('module_id'); module_pos_index = header.index('module_position')
+            lesson_id_index = header.index('lesson_id'); lesson_pos_index = header.index('lesson_position')
+            step_id_index = header.index('step_id'); step_pos_index = header.index('step_position')
+            step_type_index = header.index('step_type'); step_cost_index = header.index('step_cost')
 
-                # Merge Step (если еще не обработан в этом запуске)
-                if step_id not in processed_steps:
-                    new_step = Step(
-                        step_id=step_id, 
-                        step_position=int(item[6]), 
-                        step_type=item[7], 
-                        step_cost=int(item[8]) if item[8] else None, 
-                        lesson_id=lesson_id
-                    )
-                    db.session.merge(new_step)
-                    processed_steps.add(step_id)
-                    steps_count += 1
+            print(f"---------- Заголовок structure.csv распознан (course_id в колонке {course_id_index}). Обработка строк...")
+            for idx, item in enumerate(reader):
+                last_idx = idx
+                if idx >= limit: print(f"---------- Достигнут лимит импорта ({limit})."); break
+                if idx > 0 and idx % 10000 == 0: print(f"---------- Обработано {idx} строк structure...")
 
-            except Exception as e:
-                db.session.rollback() # Откат для этой строки
-                print(f"--- ОШИБКА при обработке строки {idx+1} (structure.csv). Строка пропущена. ---")
-                print(f"    Данные: {item}")
-                print(f"    Ошибка: {type(e).__name__}: {e}")
-                skipped_count += 1
+                try:
+                    course_id = int(item[course_id_index])
+                    # ---> СОХРАНЯЕМ ПЕРВЫЙ НАЙДЕННЫЙ ID <---
+                    if first_course_id_found is None:
+                        first_course_id_found = course_id
+                        print(f"---------- Обнаружен ID курса для этого импорта: {first_course_id_found}")
 
-    # Финальный коммит
-    print("----------Завершение цикла structure. Попытка финального коммита...")
+                    module_id = int(item[module_id_index])
+                    lesson_id = int(item[lesson_id_index])
+                    step_id = int(item[step_id_index])
+
+                    # 1. Создаем/находим курс
+                    if course_id not in processed_courses:
+                        course_title = f"Курс {course_id}" # Простое название
+                        new_course = Course(course_id=course_id, title=course_title)
+                        db.session.merge(new_course); processed_courses.add(course_id); courses_count += 1
+
+                    # 2. Создаем/находим модуль и связываем с курсом
+                    if module_id not in processed_modules:
+                        new_module = Module(module_id=module_id, module_position=int(item[module_pos_index]), course_id=course_id)
+                        db.session.merge(new_module); processed_modules.add(module_id); modules_count += 1
+
+                    # 3. Создаем/находим урок
+                    if lesson_id not in processed_lessons:
+                        new_lesson = Lesson(lesson_id=lesson_id, lesson_position=int(item[lesson_pos_index]), module_id=module_id)
+                        db.session.merge(new_lesson); processed_lessons.add(lesson_id); lessons_count += 1
+
+                    # 4. Создаем/находим шаг
+                    if step_id not in processed_steps:
+                        step_cost_str = item[step_cost_index]; step_type_str = item[step_type_index]
+                        new_step = Step(
+                            step_id=step_id, step_position=int(item[step_pos_index]),
+                            step_type=step_type_str if step_type_str else None,
+                            step_cost=int(step_cost_str) if step_cost_str else None,
+                            lesson_id=lesson_id)
+                        db.session.merge(new_step); processed_steps.add(step_id); steps_count += 1
+
+                except (IndexError, ValueError) as e:
+                    db.session.rollback()
+                    print(f"--- ОШИБКА structure строка {idx+1}: {e} (данные: {item})"); skipped_count += 1
+                except Exception as e:
+                    db.session.rollback()
+                    print(f"--- НЕИЗВЕСТНАЯ ОШИБКА structure строка {idx+1}: {e}"); skipped_count += 1
+
+        print("----------Коммит structure..."); db.session.commit()
+
+    except FileNotFoundError: print("!!! ОШИБКА: Файл backend/structure.csv не найден!"); return None # Возвращаем None, если файла нет
+    except Exception as e: print(f"!!! КРИТИЧЕСКАЯ ОШИБКА structure: {e}"); db.session.rollback(); return None # Возвращаем None при других критических ошибках
+    finally: # Итоговый отчет
+        print("-" * 30); print(f"ИТОГ ИМПОРТА STRUCTURE:"); print(f"  Успешно уник.: Курсов={courses_count}, Модулей={modules_count}, Уроков={lessons_count}, Шагов={steps_count}")
+        print(f"  Пропущено: {skipped_count}"); print(f"  Всего строк: {last_idx + 1}"); print("-" * 30)
+
+    # ---> ВОЗВРАЩАЕМ НАЙДЕННЫЙ ID КУРСА <---
+    return first_course_id_found
+
+
+def enroll_learners_to_course(target_course_id):
+    """Зачисляет всех учеников на курс с УКАЗАННЫМ ID."""
+    # Проверка, что target_course_id передан
+    if target_course_id is None:
+        print("!!! ОШИБКА ЗАЧИСЛЕНИЯ: Не был передан ID курса для зачисления (возможно, ошибка в import_structure).")
+        return
+    print(f"---------- Начало зачисления учеников на курс ID={target_course_id} ---")
     try:
-        db.session.commit()
-        print("-" * 30)
-        print(f"ИТОГ ИМПОРТА STRUCTURE:")
-        print(f"  Успешно импортировано/обновлено уникальных:")
-        print(f"    Modules: {modules_count}")
-        print(f"    Lessons: {lessons_count}")
-        print(f"    Steps: {steps_count}")
-        print(f"  Строк пропущено из-за ошибок: {skipped_count}")
-        print(f"  Всего обработано строк (до лимита): {last_idx + 1}")
-        print("-" * 30)
-    except Exception as e:
-         print(f"!!! КРИТИЧЕСКАЯ ОШИБКА при финальном коммите structure: {e}")
-         db.session.rollback()
+        course = db.session.get(Course, target_course_id) # Быстрый поиск по PK
+        if not course: print(f"!!! ОШИБКА: Курс с ID={target_course_id} не найден в БД. Зачисление прервано."); return
+
+        learners = db.session.query(Learner).all()
+        if not learners: print("--- Предупреждение: Не найдено учеников в БД для зачисления."); return
+
+        enrolled_count, already_enrolled_count, error_count = 0, 0, 0
+        existing_enrollments = {row[0] for row in db.session.query(enrollment_table.c.learner_id).filter(enrollment_table.c.course_id == target_course_id).all()}
+        print(f"--- Найдено {len(existing_enrollments)} существующих зачислений на курс {target_course_id}.")
+
+        for learner in learners:
+            if learner.user_id not in existing_enrollments:
+                try:
+                    enrollment_insert = enrollment_table.insert().values(learner_id=learner.user_id, course_id=course.course_id)
+                    db.session.execute(enrollment_insert)
+                    enrolled_count += 1
+                except IntegrityError: db.session.rollback(); already_enrolled_count += 1 # Может случиться при повторном запуске
+                except Exception as e: db.session.rollback(); print(f"!!! Ошибка зачисления user {learner.user_id}: {e}"); error_count += 1
+            else:
+                already_enrolled_count += 1
+
+        print("----------Коммит зачислений..."); db.session.commit()
+
+    except Exception as e: print(f"!!! КРИТИЧЕСКАЯ ОШИБКА при зачислении: {e}"); db.session.rollback()
+    finally: # Итоговый отчет
+        print("-" * 30); print(f"ИТОГ ЗАЧИСЛЕНИЯ НА КУРС {target_course_id}:"); print(f"  Новых зачислений: {enrolled_count}"); print(f"  Уже были/ошибки Integrity: {already_enrolled_count}"); print(f"  Другие ошибки: {error_count}"); print("-" * 30)
 
 
-def import_comments(limit=200000):
+def import_comments(limit=20000):
     print(f"----------Начало импорта комментариев (лимит: {limit})...")
     with open('backend/comments.csv', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
@@ -281,7 +333,7 @@ def import_comments(limit=200000):
              db.session.rollback()
 
 
-def import_submissions(limit=2000000):
+def import_submissions(limit=100000):
     print(f"----------Начало импорта submissions (лимит: {limit})...")
     imported_count = 0
     skipped_count = 0
@@ -356,6 +408,110 @@ def import_submissions(limit=2000000):
          print(f"!!! КРИТИЧЕСКАЯ ОШИБКА при финальном коммите submissions: {e}")
          db.session.rollback()
 
+
+def import_additional_info(filename='backend/AdditionalInfo.xlsx'):
+    """Импортирует доп. данные для шагов из Excel, читая по ИНДЕКСАМ колонок."""
+    print(f"--- Начало импорта доп. информации из {filename} (ПО ИНДЕКСАМ)...")
+    try:
+        # Читаем Excel, ИГНОРИРУЯ заголовок (header=None).
+        # Pandas назначит числовые индексы (0, 1, 2...) колонкам.
+        # skiprows=1 пропустит первую строку (где могут быть заголовки)
+        df = pd.read_excel(filename, header=None, skiprows=1)
+
+        # --- ОПРЕДЕЛЯЕМ ИНДЕКСЫ КОЛОНОК (0-based) ---
+        # На основе вашего скриншота:
+        # F -> 5, I -> 8, J -> 9, K -> 10, L -> 11
+        STEP_ID_IDX = 5
+        TITLE_SHORT_IDX = 8
+        TITLE_FULL_IDX = 9
+        DIFFICULTY_IDX = 10
+        DISCRIMINATION_IDX = 11
+        # -----------------------------------------
+
+        # Проверяем, достаточно ли колонок в файле
+        max_required_index = max(STEP_ID_IDX, TITLE_SHORT_IDX, TITLE_FULL_IDX, DIFFICULTY_IDX, DISCRIMINATION_IDX)
+        if df.shape[1] <= max_required_index:
+            print(f"ОШИБКА: В файле {filename} недостаточно колонок ({df.shape[1]}) для чтения по максимальному требуемому индексу ({max_required_index}).")
+            return
+
+        count = 0
+        skipped_steps_no_match = 0
+        skipped_rows_error = 0
+
+        # Итерируем по строкам DataFrame
+        for index, row in df.iterrows():
+            try:
+                # Получаем step_id по индексу
+                step_id_raw = row[STEP_ID_IDX]
+                # Попытка преобразовать в int, обработка ошибок и пустых значений
+                if pd.isna(step_id_raw):
+                    # print(f"--- Пропуск строки {index + 2}: Пустой step_id (индекс {STEP_ID_IDX}).") # +2 т.к. index 0-based и пропустили заголовок
+                    skipped_rows_error += 1
+                    continue
+                step_id = int(step_id_raw)
+
+            except (ValueError, TypeError):
+                print(f"--- ОШИБКА: Не удалось получить step_id (индекс {STEP_ID_IDX}) в строке {index + 2}. Значение: '{step_id_raw}'. Строка пропущена.")
+                skipped_rows_error += 1
+                continue
+
+            # Проверяем, существует ли шаг в основной таблице Step
+            step_exists = db.session.get(Step, step_id)
+            if not step_exists:
+                skipped_steps_no_match += 1
+                continue
+
+            # --- Получаем остальные данные по ИНДЕКСАМ ---
+            title_short_raw = row[TITLE_SHORT_IDX]
+            title_full_raw = row[TITLE_FULL_IDX]
+            difficulty_raw = row[DIFFICULTY_IDX]
+            discrimination_raw = row[DISCRIMINATION_IDX]
+            # ---------------------------------------------
+
+            # Обрабатываем NaN и типы данных
+            # Добавляем проверку math.isnan для float перед конвертацией
+            difficulty = None if pd.isna(difficulty_raw) or (isinstance(difficulty_raw, float) and math.isnan(difficulty_raw)) else float(difficulty_raw)
+            discrimination = None if pd.isna(discrimination_raw) or (isinstance(discrimination_raw, float) and math.isnan(discrimination_raw)) else float(discrimination_raw)
+            title_short = None if pd.isna(title_short_raw) else str(title_short_raw)
+            title_full = None if pd.isna(title_full_raw) else str(title_full_raw)
+
+            # Создаем объект AdditionalStepInfo
+            new_entry = AdditionalStepInfo(
+                step_id=step_id,
+                step_title_short=title_short,
+                step_title_full=title_full,
+                difficulty=difficulty,
+                discrimination=discrimination
+            )
+            try:
+                db.session.merge(new_entry)
+                count += 1
+            except Exception as e:
+                db.session.rollback()
+                print(f"--- Ошибка при merge доп. инфо для step_id {step_id}: {e}")
+                skipped_rows_error += 1
+
+        # Финальный коммит
+        print("----------Коммит доп. инфо...")
+        try:
+            db.session.commit()
+        except Exception as e:
+             print(f"!!! КРИТИЧЕСКАЯ ОШИБКА при финальном коммите доп. инфо: {e}")
+             db.session.rollback()
+
+        # Итоговый отчет
+        print(f"---------- Импортировано/обновлено доп. инфо: {count} записей.")
+        if skipped_steps_no_match > 0:
+            print(f"---------- Пропущено (нет шага в БД): {skipped_steps_no_match} записей.")
+        if skipped_rows_error > 0:
+            print(f"---------- Пропущено строк из-за ошибок чтения/формата: {skipped_rows_error}.")
+
+    except FileNotFoundError:
+        print(f"!!! ОШИБКА: Файл {filename} не найден.")
+    except Exception as e:
+        print(f"!!! НЕПРЕДВИДЕННАЯ ОШИБКА при чтении/обработке файла {filename}: {e}")
+        db.session.rollback()
+
 # --- Основной блок для запуска импорта ---
 if __name__ == '__main__':
     print("="*40)
@@ -378,11 +534,18 @@ if __name__ == '__main__':
         print("\n----------Начало импорта данных...")
         
         # Вызов функций импорта в правильном порядке зависимостей
-        import_learners()
-        import_structure() 
-        # Только после learners и structure можно импортировать comments и submissions
-        import_comments()
-        import_submissions()
-        
+        #import_learners()
+        imported_course_id = import_structure()
+
+        if imported_course_id is not None: # Только если ID курса был найден...
+            enroll_learners_to_course(target_course_id=imported_course_id) # ...зачисляем на этот курс
+        else:
+            print("!!! Импорт структуры не вернул ID курса. Зачисление пропущено.")
+
+        # Импортируем остальное
+        import_additional_info()
+        #import_comments()
+        #import_submissions()
+
         print("\n----------ИМПОРТ ДАННЫХ ЗАВЕРШЕН.")
         print("="*40)

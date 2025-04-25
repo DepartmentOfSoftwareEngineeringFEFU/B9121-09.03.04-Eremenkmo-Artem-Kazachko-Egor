@@ -1,11 +1,19 @@
 Эндпоинты:
 http://127.0.0.1:5000/api/metrics/...
+http://127.0.0.1:5000/api/metrics/steps/structure
+http://127.0.0.1:5000/api/metrics/step/*STEPID*/all
+http://127.0.0.1:5000/api/metrics/course/completion_rate_80_percent
 
 Просмотр данных БД в онлайн формате:
 http://127.0.0.1:5000/admin/
+
+Запуск сайта:
+cd frontend
+npm start
 
 Заполнение БД данными:
 python -m backend.seed_database
 
 Запуск сервера:
-python -m backend.database
+backend\venv\Scripts\activate
+flask run
