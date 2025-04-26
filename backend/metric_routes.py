@@ -2,9 +2,9 @@ import json
 import math
 from flask import Response, Blueprint, jsonify, request, current_app, abort
 from .models import db, Submission, Learner, Step, Comment, Lesson, Module, AdditionalStepInfo, Course
-from sqlalchemy import func, distinct, case, cast, Float, text
-from .app_state import calculated_metrics_storage
-from sqlalchemy.orm import joinedload
+from sqlalchemy import func, distinct, case, cast, Float, text, select
+from .app_state import calculated_metrics_storage, structure_with_metrics_cache   
+from sqlalchemy.orm import joinedload, aliased
 import time
 
 metrics_bp = Blueprint('metrics', __name__, url_prefix='/api/metrics')
@@ -231,77 +231,148 @@ def get_course_completion_rates():
 
 @metrics_bp.route("/steps/structure", methods=['GET'])
 def get_steps_structure():
-    """Возвращает список ВСЕХ шагов с деталями и хронологией."""
-    print("--- Запрос структуры всех шагов ---")
+    """
+    Возвращает список ВСЕХ шагов с деталями, хронологией
+    И КЛЮЧЕВЫМИ МЕТРИКАМИ ПРОИЗВОДИТЕЛЬНОСТИ.
+    Использует кеширование в памяти для ускорения повторных запросов.
+    """
+    global structure_with_metrics_cache
+
+    cache_key = 'all_steps_data'
+    if cache_key in structure_with_metrics_cache:
+        print("--- /steps/structure: Возврат данных из КЕША ---")
+        cached_data = structure_with_metrics_cache[cache_key]
+        # Проверяем тип на всякий случай перед дампом
+        if isinstance(cached_data, list):
+            json_string = json.dumps(cached_data, ensure_ascii=False)
+            return Response(json_string, mimetype='application/json; charset=utf-8')
+        else:
+            # Если в кеше что-то не то, очищаем и пересчитываем
+             print("--- /steps/structure: Ошибка - в кеше не список. Очистка кеша. ---")
+             del structure_with_metrics_cache[cache_key]
+
+
+    print("--- /steps/structure: Расчет данных (кеш пуст или очищен) ---")
+    start_time = time.time()
     try:
-        # Запрашиваем все шаги, сразу подгружая связанные данные для эффективности
+        # 1. Запрос базовой структуры
+        print("    [1/4] Запрос базовой структуры шагов...")
         all_steps_query = db.session.query(Step).options(
-            # Загружаем цепочку Lesson -> Module -> Course
             joinedload(Step.lesson).joinedload(Lesson.module).joinedload(Module.course),
-            # Загружаем дополнительную информацию
             joinedload(Step.additional_info)
-        # Присоединяем таблицы явно, чтобы по ним можно было сортировать
         ).join(Step.lesson).join(Lesson.module).join(Module.course)\
-         .order_by( # Сортируем по иерархии курса
-             Course.course_id,        # Сначала по курсу
-             Module.module_position,  # Потом по позиции модуля в курсе
-             Lesson.lesson_position,  # Потом по позиции урока в модуле
-             Step.step_position       # Наконец, по позиции шага в уроке
-         )
-
+         .order_by(Course.course_id, Module.module_position, Lesson.lesson_position, Step.step_position)
         all_steps = all_steps_query.all()
-        print(f"    Найдено шагов: {len(all_steps)}")
+        step_ids = [step.step_id for step in all_steps]
+        print(f"    ... Найдено шагов: {len(all_steps)}")
 
-        # Формируем список результатов
+        if not all_steps:
+            print("--- Шаги не найдены. Возвращаем пустой список (не кешируем).")
+            return jsonify([])
+
+        # 2. Агрегаты Submissions
+        print("    [2/4] Запрос агрегированных данных из Submissions...")
+        submissions_agg_start = time.time()
+        submissions_agg_query = db.session.query(
+            Submission.step_id,
+            func.count(Submission.submission_id).label("total_submissions"),
+            func.sum(case((Submission.status == 'correct', 1), else_=0)).label("correct_submissions"),
+            func.count(distinct(Submission.user_id)).label("total_attempted_users"),
+            func.count(distinct(case((Submission.status == 'correct', Submission.user_id)))).label("passed_correctly_users")
+        ).filter(Submission.step_id.in_(step_ids)).group_by(Submission.step_id)
+
+        submissions_agg_results = submissions_agg_query.all()
+
+        # ---> ИСПРАВЛЕННЫЙ БЛОК СОЗДАНИЯ submissions_data <---
+        submissions_data = {
+            row.step_id: { # Ключ - step_id
+                # Значение - СЛОВАРЬ с метриками
+                "total_submissions": row.total_submissions or 0,
+                "correct_submissions": row.correct_submissions or 0,
+                "total_attempted_users": row.total_attempted_users or 0,
+                "passed_correctly_users": row.passed_correctly_users or 0,
+            }
+            for row in submissions_agg_results # Итерация по результатам запроса
+        }
+        # ------------------------------------------------------
+        print(f"    ... Агрегаты Submissions получены (за {(time.time() - submissions_agg_start):.2f} сек)")
+
+
+        # 3. Данные по комментариям
+        print("    [3/4] Запрос данных по комментариям...")
+        comments_start = time.time()
+        comments_query = db.session.query(
+            Comment.step_id, func.count(Comment.comment_id).label("comments_count")
+        ).filter(Comment.step_id.in_(step_ids)).group_by(Comment.step_id)
+        comments_results = comments_query.all()
+        comments_data = {row.step_id: row.comments_count or 0 for row in comments_results}
+        print(f"    ... Данные по комментариям получены (за {(time.time() - comments_start):.2f} сек)")
+
+        # 4. Формирование результата
+        print("    [4/4] Формирование итогового результата...")
         results_list = []
         for step in all_steps:
-            step_data = {
-                # Данные из Step
+            step_data = { # Собираем все данные
                 "step_id": step.step_id,
                 "step_position": step.step_position,
                 "step_type": step.step_type,
-                "step_cost": step.step_cost, # Оценивается ли шаг (0 или >0)
-                # Данные из Lesson (если есть связь)
-                "lesson_id": None,
-                "lesson_position": None,
-                # Данные из Module (если есть связь)
-                "module_id": None,
-                "module_position": None,
-                # Данные из Course (если есть связь)
-                "course_id": None,
-                "course_title": None,
-                # Данные из AdditionalStepInfo (если есть связь)
-                "step_title_short": None,
-                "step_title_full": None,
-                "difficulty": None,       # Сложность из доп. инфо
-                "discrimination": None    # Дискриминативность из доп. инфо
+                "step_cost": step.step_cost,
+                "lesson_id": step.lesson.lesson_id if step.lesson else None,
+                "lesson_position": step.lesson.lesson_position if step.lesson else None,
+                "module_id": step.lesson.module.module_id if step.lesson and step.lesson.module else None,
+                "module_position": step.lesson.module.module_position if step.lesson and step.lesson.module else None,
+                "module_title": step.lesson.module.title if step.lesson and step.lesson.module and hasattr(step.lesson.module, 'title') else None,
+                "course_id": step.lesson.module.course.course_id if step.lesson and step.lesson.module and step.lesson.module.course else None,
+                "course_title": step.lesson.module.course.title if step.lesson and step.lesson.module and step.lesson.module.course else None,
+                "step_title_short": step.additional_info.step_title_short if step.additional_info else None,
+                "step_title_full": step.additional_info.step_title_full if step.additional_info else None,
+                "difficulty": step.additional_info.difficulty if step.additional_info else None,
+                "discrimination": step.additional_info.discrimination if step.additional_info else None,
+                # Defaults
+                "users_passed": 0, "all_users_attempted": 0, "step_effectiveness": 0.0,
+                "success_rate": 0.0, "avg_attempts_per_passed_user": None, "comments_count": 0,
+                "avg_completion_time_seconds": None,
             }
 
-            # Заполняем данные из связанных таблиц
-            if step.lesson:
-                step_data["lesson_id"] = step.lesson.lesson_id
-                step_data["lesson_position"] = step.lesson.lesson_position
-                if step.lesson.module:
-                    step_data["module_id"] = step.lesson.module.module_id
-                    step_data["module_position"] = step.lesson.module.module_position
-                    if step.lesson.module.course:
-                        step_data["course_id"] = step.lesson.module.course.course_id
-                        step_data["course_title"] = step.lesson.module.course.title
+            # Получаем данные из словаря submissions_data (теперь это должен быть словарь)
+            step_submissions = submissions_data.get(step.step_id)
+            # Проверяем, что получили именно словарь (на всякий случай)
+            if isinstance(step_submissions, dict):
+                passed = step_submissions.get("passed_correctly_users", 0) # Используем .get() для безопасности
+                attempted = step_submissions.get("total_attempted_users", 0)
+                total_subs = step_submissions.get("total_submissions", 0)
+                correct_subs = step_submissions.get("correct_submissions", 0)
 
-            if step.additional_info:
-                step_data["step_title_short"] = step.additional_info.step_title_short
-                step_data["step_title_full"] = step.additional_info.step_title_full
-                step_data["difficulty"] = step.additional_info.difficulty
-                step_data["discrimination"] = step.additional_info.discrimination
+                step_data["users_passed"] = passed
+                step_data["all_users_attempted"] = attempted
+                step_data["step_effectiveness"] = (float(passed) / attempted) if attempted > 0 else 0.0
+                step_data["success_rate"] = (float(correct_subs) / total_subs) if total_subs > 0 else 0.0
+                step_data["avg_attempts_per_passed_user"] = (float(total_subs) / passed) if passed > 0 else None
+            elif step_submissions is not None:
+                 # Логгируем, если получили что-то неожиданное
+                 print(f"!!! ПРЕДУПРЕЖДЕНИЕ: Ожидался dict в submissions_data для step_id {step.step_id}, но получен {type(step_submissions)}")
 
+
+            step_data["comments_count"] = comments_data.get(step.step_id, 0)
             results_list.append(step_data)
 
-        print("--- Формирование списка шагов завершено.")
-        return jsonify(results_list)
+        # Сохраняем в кеш
+        structure_with_metrics_cache[cache_key] = results_list
+        print(f"--- /steps/structure: Данные рассчитаны и сохранены в кеш (ключ: {cache_key}) ---")
+
+        total_duration = time.time() - start_time
+        print(f"--- Формирование списка шагов С МЕТРИКАМИ завершено (за {total_duration:.2f} сек).")
+        json_string = json.dumps(results_list, ensure_ascii=False)
+        return Response(json_string, mimetype='application/json; charset=utf-8')
 
     except Exception as e:
-        print(f"!!! Ошибка при получении структуры шагов: {e}")
-        return jsonify({"error": "Could not retrieve step structure", "details": str(e)}), 500
+        if cache_key in structure_with_metrics_cache:
+            del structure_with_metrics_cache[cache_key]
+        total_duration = time.time() - start_time
+        print(f"!!! Ошибка при расчете структуры шагов С МЕТРИКАМИ (за {total_duration:.2f} сек): {e}")
+        import traceback
+        traceback.print_exc() # Печатаем полный traceback
+        return jsonify({"error": "Could not retrieve step structure with metrics", "details": str(e)}), 500
 
 
 @metrics_bp.route("/step/<int:step_id>/all", methods=['GET'])

@@ -1,6 +1,6 @@
 // src/components/StepComparison.jsx
 import React, { useState, useEffect } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import {
   Container,
   Typography,
@@ -9,137 +9,148 @@ import {
   Box,
   CircularProgress,
   Alert,
-  Button,
 } from "@mui/material";
-import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 
-// Импортируем АКТУАЛЬНЫЙ генератор mock-данных
-import { generateMockStepData } from "../mocks/mockData";
+// --- ИМПОРТИРУЕМ ФУНКЦИЮ API ---
+import { getAllStepMetrics } from "../api/apiService"; // Используем тот же API, что и StepAnalysis
 
-// Создаем актуальные mock-данные (для всего курса) здесь
-const allMockStepData = generateMockStepData(); // Вызываем импортированную функцию
+// --- ИМПОРТИРУЕМ ФУНКЦИИ ФОРМАТИРОВАНИЯ (можно вынести в отдельный файл utils) ---
+const formatPercentage = (value) => {
+  if (typeof value !== "number" || !isFinite(value)) return "N/A";
+  return `${(value * 100).toFixed(1)}%`;
+};
+const formatTimeInMinutes = (value) => {
+  if (value === null || typeof value === "undefined") return "N/A";
+  const numValueInSeconds = parseFloat(value);
+  if (
+    isNaN(numValueInSeconds) ||
+    !isFinite(numValueInSeconds) ||
+    numValueInSeconds < 0
+  )
+    return "N/A";
+  const minutes = numValueInSeconds / 60;
+  return `${minutes.toFixed(1)} мин`;
+};
+const formatNumber = (value, decimals = 1) => {
+  if (value === null || typeof value === "undefined") return "N/A";
+  const numValue = parseFloat(value);
+  if (isNaN(numValue) || !isFinite(numValue)) return "N/A";
+  return numValue.toFixed(decimals);
+};
+const formatInteger = (value) => {
+  if (value === null || typeof value === "undefined") return "N/A";
+  const intValue = parseInt(value, 10);
+  if (isNaN(intValue) || !isFinite(intValue)) return "N/A";
+  return intValue;
+};
+// ---------------------------------------------------------------------------------
 
 function StepComparison() {
   const location = useLocation();
-  const navigate = useNavigate();
-  const [comparisonData, setComparisonData] = useState([]); // Данные для отображения сравнения
+
+  // comparisonData будет массивом объектов с метриками для каждого шага
+  const [comparisonData, setComparisonData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [courseIdDecoded, setCourseIdDecoded] = useState(null); // Декодированный ID курса из URL
-  const [courseTitle, setCourseTitle] = useState(""); // Название курса
-  const [stepIds, setStepIds] = useState([]); // ID шагов для сравнения
+  const [courseTitle, setCourseTitle] = useState("");
+  const [stepIds, setStepIds] = useState([]);
 
   useEffect(() => {
-    console.log("--- StepComparison useEffect ---");
+    console.log("--- StepComparison useEffect [location.search] ---");
     const params = new URLSearchParams(location.search);
-    const courseIdParam = params.get("courseId"); // Получаем ID из URL (может быть закодирован)
+    const courseIdParam = params.get("courseId");
     const stepsParam = params.get("steps");
 
-    // Декодируем ID курса сразу
+    // --- 1. Обработка ID курса (как и было) ---
     let decodedId = null;
     if (courseIdParam) {
       try {
         decodedId = decodeURIComponent(courseIdParam);
-        setCourseIdDecoded(decodedId); // Сохраняем декодированный для использования
-        console.log("1. Декодированный ID из URL:", decodedId);
+        console.log("   Декодированный ID курса:", decodedId);
       } catch (e) {
-        console.error("Ошибка декодирования courseId из URL:", e);
+        console.error("   Ошибка декодирования courseId:", e);
         setError("Некорректный ID курса в URL.");
         setLoading(false);
         return;
       }
     } else {
-      console.error("ID курса не найден в URL.");
       setError("Не указан ID курса.");
       setLoading(false);
       return;
     }
 
-    // --- Получаем название курса из localStorage (пока нет API курсов) ---
+    // --- 2. Получение названия курса из localStorage (как и было) ---
     const storedCourses = localStorage.getItem("uploadedCourses");
-    console.log("2. Данные из localStorage:", storedCourses);
     let courseName = "Неизвестный курс";
     if (storedCourses && decodedId) {
       try {
         const courses = JSON.parse(storedCourses);
-        console.log("3. Распарсенные курсы:", courses);
-
-        // Ищем курс, сравнивая ДЕКОДИРОВАННЫЙ ID из URL с ДЕКОДИРОВАННЫМ ID из localStorage
-        const currentCourse = courses.find((course) => {
-          try {
-            const localStorageIdDecoded = decodeURIComponent(course.id);
-            // console.log(`Сравнение: localStorage Decoded ID ("${localStorageIdDecoded}") === URL Decoded ID ("${decodedId}")`);
-            return localStorageIdDecoded === decodedId;
-          } catch {
-            return false;
-          } // Игнорируем ошибки декодирования из localStorage
-        });
-        console.log("4. Найденный курс:", currentCourse);
-
-        if (currentCourse) {
-          courseName = currentCourse.name;
-        } else {
-          console.warn(
-            `Курс с ID (декодированным) ${decodedId} не найден в localStorage для заголовка.`
-          );
-        }
+        const currentCourse = courses.find(
+          (c) => decodeURIComponent(c.id) === decodedId
+        );
+        if (currentCourse) courseName = currentCourse.name;
       } catch (e) {
-        console.error("Ошибка парсинга localStorage в StepComparison:", e);
-        // Не устанавливаем глобальную ошибку, только не найдем имя
+        console.error("   Ошибка парсинга localStorage:", e);
       }
     }
     setCourseTitle(courseName);
-    // --- Конец получения названия ---
 
-    // --- Логика загрузки данных для сравнения (используем mock) ---
+    // --- 3. Загрузка РЕАЛЬНЫХ данных для шагов ---
     if (stepsParam) {
-      const ids = stepsParam.split(",").map((id) => parseInt(id.trim(), 10));
-      setStepIds(ids);
-      setLoading(true); // Устанавливаем загрузку перед фильтрацией
-      setError(null); // Сбрасываем ошибку
+      const ids = stepsParam
+        .split(",")
+        .map((id) => parseInt(id.trim(), 10))
+        .filter((id) => !isNaN(id)); // Убираем нечисловые ID
 
-      try {
-        console.log(
-          `Загрузка данных для сравнения шагов: [${ids.join(
-            ", "
-          )}] для курса ID (декодир.): ${decodedId}`
-        );
-
-        // Используем allMockStepData, определенную ВНЕ useEffect
-        const filteredData = allMockStepData.filter(
-          (step) =>
-            // Убедимся, что step.step_id существует и является числом перед сравнением
-            typeof step.step_id === "number" && ids.includes(step.step_id)
-        );
-
-        if (filteredData.length !== ids.length) {
-          console.warn(
-            `Не все шаги [${ids.join(", ")}] найдены в mockData (${
-              filteredData.length
-            } из ${ids.length}).`
-          );
-          // Можно установить сообщение об ошибке, если какие-то шаги не найдены
-          // setError(`Не найдены данные для шагов: ${ids.filter(id => !filteredData.some(step => step.step_id === id)).join(', ')}`);
-        } else {
-          console.log(`Найдены все ${ids.length} шагов в mockData.`);
-        }
-
-        // Сохраняем найденные данные (могут быть не все запрошенные)
-        setComparisonData(filteredData);
-      } catch (err) {
-        console.error("Ошибка при фильтрации mock-данных:", err);
-        setError("Ошибка обработки данных для сравнения.");
-        setComparisonData([]); // Сбрасываем данные при ошибке
-      } finally {
-        // Убираем setTimeout, отображаем сразу после фильтрации
+      if (ids.length === 0) {
+        setError("Не найдены ID шагов для сравнения в URL.");
         setLoading(false);
+        return;
       }
+
+      setStepIds(ids);
+      setLoading(true);
+      setError(null);
+      setComparisonData([]); // Очищаем предыдущие данные
+
+      const fetchComparisonData = async () => {
+        console.log(
+          `   Загрузка данных для сравнения шагов: [${ids.join(", ")}]`
+        );
+        try {
+          // Используем Promise.all для параллельной загрузки данных всех шагов
+          const results = await Promise.all(
+            ids.map((id) => getAllStepMetrics(id)) // Вызываем API для каждого ID
+          );
+          console.log("   Получены данные для сравнения:", results);
+          // Фильтруем результаты на случай, если какой-то шаг вернул ошибку или null
+          const validResults = results.filter((res) => res && !res.error);
+          if (validResults.length !== ids.length) {
+            console.warn(
+              `   Не все шаги удалось загрузить. Загружено ${validResults.length} из ${ids.length}`
+            );
+            // Можно установить частичную ошибку, если нужно
+            // setError(`Не удалось загрузить данные для некоторых шагов.`);
+          }
+          setComparisonData(validResults); // Сохраняем успешно загруженные данные
+        } catch (err) {
+          console.error(
+            "   КРИТИЧЕСКАЯ ОШИБКА при загрузке данных для сравнения:",
+            err
+          );
+          setError(err.message || "Не удалось загрузить данные для сравнения.");
+          setComparisonData([]); // Очищаем данные при ошибке
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      fetchComparisonData();
     } else {
-      console.error("Параметр 'steps' не найден в URL.");
       setError("Не указаны шаги для сравнения в URL.");
       setLoading(false);
     }
-    // --- Конец логики загрузки данных ---
+    // --- Конец логики загрузки ---
   }, [location.search]); // Зависимость от location.search
 
   // --- Отображение загрузки/ошибки ---
@@ -151,8 +162,8 @@ function StepComparison() {
     );
   }
 
+  // Отображаем ошибку, если данных нет СОВСЕМ
   if (error && comparisonData.length === 0) {
-    // Показываем ошибку, только если нет данных для показа
     return (
       <Container sx={{ mt: 4 }}>
         <Alert severity="error">{error}</Alert>
@@ -163,112 +174,133 @@ function StepComparison() {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
-        <Typography variant="h4" gutterBottom component="div">
+      <Box
+        sx={{ display: "flex", alignItems: "center", mb: 2, flexWrap: "wrap" }}
+      >
+        <Typography variant="h4" component="div">
           {" "}
           {/* Убрал gutterBottom с h4 */}
           Сравнение шагов курса:{" "}
-          <Typography component="span" variant="h4" color="primary">
+          <Typography component="span" variant="h4" color="text.secondary">
             {courseTitle}
           </Typography>
         </Typography>
       </Box>
-      {/* Отображаем ошибку, если она есть, даже если какие-то данные загрузились */}
+
+      {/* Отображаем ошибку, если она есть, но какие-то данные загрузились */}
       {error && comparisonData.length > 0 && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          {error}
+          {error} (Некоторые шаги могли не загрузиться)
         </Alert>
       )}
+
       <Typography variant="h6" gutterBottom sx={{ mb: 3 }}>
-        Сравниваемые шаги: {stepIds.join(", ")}
+        Сравниваемые шаги (ID): {stepIds.join(", ")}
       </Typography>
 
+      {/* Используем Grid V2 для адаптивности */}
       <Grid container spacing={3} alignItems="stretch">
-        {" "}
-        {/* Добавил alignItems="stretch" */}
-        {comparisonData.map((step) => (
-          <Grid
-            item
-            // Адаптивная ширина колонок
-            xs={12} // На маленьких экранах - полная ширина
-            sm={comparisonData.length >= 3 ? 4 : 6} // На средних - 3 или 2 колонки
-            md={
-              comparisonData.length >= 4
-                ? 3
-                : comparisonData.length === 3
-                ? 4
-                : 6
-            } // На больших - 4, 3 или 2 колонки
-            lg={
-              comparisonData.length >= 4
-                ? 3
-                : comparisonData.length === 3
-                ? 4
-                : 6
-            } // На очень больших
-            key={step.step_id}
-          >
-            <Paper
-              elevation={3}
-              sx={{
-                p: 2,
-                height: "100%",
-                display: "flex",
-                flexDirection: "column",
-              }}
+        {comparisonData.map(
+          (
+            step // step теперь содержит полный объект метрик
+          ) => (
+            <Grid
+              // Адаптивная ширина колонок (как в Dashboard)
+              xs={12}
+              sm={comparisonData.length >= 3 ? 4 : 6}
+              md={
+                comparisonData.length >= 4
+                  ? 3
+                  : comparisonData.length === 3
+                  ? 4
+                  : 6
+              }
+              lg={
+                comparisonData.length >= 4
+                  ? 3
+                  : comparisonData.length === 3
+                  ? 4
+                  : 6
+              }
+              key={step.step_id} // Используем step_id как ключ
             >
-              {" "}
-              {/* height: 100% */}
-              <Typography
-                variant="h5"
-                gutterBottom
-                component="div"
-                color="primary"
-                sx={{ mb: 2 }} // Добавим отступ под заголовком
+              <Paper
+                elevation={3}
+                sx={{
+                  p: 2,
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                }}
               >
-                {step.name || `Шаг ${step.step_id}`}{" "}
-                {/* Используем имя из моков */}
-              </Typography>
-              <Box sx={{ flexGrow: 1 }}>
-                {" "}
-                {/* Занимает оставшееся место */}
-                {/* Используем ключи из generateMockStepData */}
-                <Typography variant="body2">
-                  <strong>Завершения:</strong> {step.completions ?? "N/A"}
+                {/* Используем данные из step */}
+                <Typography
+                  variant="h5"
+                  gutterBottom
+                  component="div"
+                  color="primary"
+                  sx={{ mb: 2 }}
+                >
+                  {/* Отображаем полное или короткое название, или ID */}
+                  {step.step_title_full ||
+                    step.step_title_short ||
+                    `Шаг ${step.step_id}`}
                 </Typography>
-                <Typography variant="body2">
-                  <strong>Отсевы:</strong> {step.dropouts ?? "N/A"}
-                </Typography>
-                <Typography variant="body2">
-                  <strong>Ср. время (сек):</strong> {step.avg_time ?? "N/A"}
-                </Typography>
-                <Typography variant="body2">
-                  <strong>Успешность:</strong> {step.success_rate ?? "N/A"}
-                </Typography>
-                <Typography variant="body2">
-                  <strong>Ср. попытки:</strong> {step.avg_attempts ?? "N/A"}
-                </Typography>
-                <Typography variant="body2">
-                  <strong>Комментарии:</strong> {step.comments ?? "N/A"}
-                </Typography>
-                <Typography variant="body2">
-                  <strong>Частота "?":</strong> {step.question_freq ?? "N/A"}
-                </Typography>
-                <Typography variant="body2">
-                  <strong>Самокоррекция:</strong>{" "}
-                  {step.self_correction_rate ?? "N/A"}
-                </Typography>
-              </Box>
-            </Paper>
-          </Grid>
-        ))}
-        {/* Сообщение, если после фильтрации не осталось данных */}
+                <Box sx={{ flexGrow: 1 }}>
+                  {/* Отображаем метрики, используя функции форматирования */}
+                  <Typography variant="body2">
+                    <strong>Успешно прошли:</strong>{" "}
+                    {formatInteger(step.users_passed)} /{" "}
+                    {formatInteger(step.all_users_attempted)}
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>Результативность:</strong>{" "}
+                    {formatPercentage(step.step_effectiveness)}
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>Ср. время:</strong>{" "}
+                    {formatTimeInMinutes(step.avg_completion_time_seconds)}
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>Успешность попыток:</strong>{" "}
+                    {formatPercentage(step.success_rate)}
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>Ср. число попыток:</strong>{" "}
+                    {formatNumber(step.avg_attempts_per_passed_user)}
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>Комментарии:</strong>{" "}
+                    {formatInteger(step.comments_count)}
+                  </Typography>
+                  {/* Доп. метрики, если они есть */}
+                  {step.difficulty !== null && (
+                    <Typography variant="body2">
+                      <strong>Difficulty:</strong>{" "}
+                      {formatNumber(step.difficulty, 3)}
+                    </Typography>
+                  )}
+                  {step.discrimination !== null && (
+                    <Typography variant="body2">
+                      <strong>Discrimination:</strong>{" "}
+                      {formatNumber(step.discrimination, 3)}
+                    </Typography>
+                  )}
+                </Box>
+              </Paper>
+            </Grid>
+          )
+        )}
+        {/* Сообщение, если после загрузки не осталось данных */}
         {comparisonData.length === 0 && !loading && !error && (
-          <Grid item xs={12}>
+          <Grid xs={12}>
+            {" "}
+            {/* Используем Grid V2 */}
             <Typography
               sx={{ textAlign: "center", color: "text.secondary", mt: 3 }}
             >
-              Данные для выбранных шагов не найдены в mock-данных.
+              Нет данных для отображения сравнения. Возможно, указанные шаги не
+              найдены или произошла ошибка загрузки.
             </Typography>
           </Grid>
         )}
