@@ -62,7 +62,7 @@ def parse_datetime(date_str):
                 return None
 
 
-def import_learners(limit=50000):
+def import_learners(limit=500000):
     print(f"----------Начало импорта learners (лимит: {limit})...")
     imported_count = 0
     skipped_count = 0
@@ -241,7 +241,7 @@ def enroll_learners_to_course(target_course_id):
         print("-" * 30); print(f"ИТОГ ЗАЧИСЛЕНИЯ НА КУРС {target_course_id}:"); print(f"  Новых зачислений: {enrolled_count}"); print(f"  Уже были/ошибки Integrity: {already_enrolled_count}"); print(f"  Другие ошибки: {error_count}"); print("-" * 30)
 
 
-def import_comments(limit=20000):
+def import_comments(limit=300000):
     print(f"----------Начало импорта комментариев (лимит: {limit})...")
     with open('backend/comments.csv', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
@@ -333,7 +333,7 @@ def import_comments(limit=20000):
              db.session.rollback()
 
 
-def import_submissions(limit=100000):
+def import_submissions(limit=30000000):
     print(f"----------Начало импорта submissions (лимит: {limit})...")
     imported_count = 0
     skipped_count = 0
@@ -534,7 +534,7 @@ if __name__ == '__main__':
         print("\n----------Начало импорта данных...")
         
         # Вызов функций импорта в правильном порядке зависимостей
-        #import_learners()
+        import_learners()
         imported_course_id = import_structure()
 
         if imported_course_id is not None: # Только если ID курса был найден...
@@ -544,8 +544,8 @@ if __name__ == '__main__':
 
         # Импортируем остальное
         import_additional_info()
-        #import_comments()
-        #import_submissions()
+        import_comments()
+        import_submissions()
 
         print("\n----------ИМПОРТ ДАННЫХ ЗАВЕРШЕН.")
         print("="*40)
