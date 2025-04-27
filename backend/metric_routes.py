@@ -1,5 +1,6 @@
 import json
 import math
+import os
 from flask import Response, Blueprint, jsonify, request, current_app, abort
 from .models import db, Submission, Learner, Step, Comment, Lesson, Module, AdditionalStepInfo, Course
 from sqlalchemy import func, distinct, case, cast, Float, text, select
@@ -9,6 +10,40 @@ import time
 
 metrics_bp = Blueprint('metrics', __name__, url_prefix='/api/metrics')
 
+CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache') # Папка для кеша рядом с этим файлом
+STRUCTURE_CACHE_FILE = os.path.join(CACHE_DIR, 'structure_cache.json')
+STRUCTURE_CACHE_KEY = 'all_steps_data' # Ключ для in-memory кеша
+
+# --- Функции для работы с файловым кешем ---
+def load_cache_from_file(filepath):
+    """Загружает данные из JSON-файла, если он существует."""
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                print(f"--- КЕШ: Данные успешно загружены из файла {filepath} ---")
+                return data
+        except (json.JSONDecodeError, IOError, FileNotFoundError) as e:
+            print(f"!!! ОШИБКА КЕША: Не удалось прочитать или декодировать файл {filepath}. Ошибка: {e}")
+            # Если файл поврежден, лучше его удалить, чтобы пересчитать
+            try:
+                os.remove(filepath)
+                print(f"--- КЕШ: Поврежденный файл кеша {filepath} удален. ---")
+            except OSError as remove_err:
+                 print(f"!!! ОШИБКА КЕША: Не удалось удалить поврежденный файл {filepath}. Ошибка: {remove_err}")
+            return None # Возвращаем None, чтобы данные пересчитались
+    return None # Файла нет
+
+def save_cache_to_file(data, filepath):
+    """Сохраняет данные в JSON-файл, создавая директорию при необходимости."""
+    try:
+        # Убедимся, что директория существует
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2) # Добавил indent для читаемости
+            print(f"--- КЕШ: Данные успешно сохранены в файл {filepath} ---")
+    except (IOError, TypeError) as e:
+        print(f"!!! ОШИБКА КЕША: Не удалось сохранить данные в файл {filepath}. Ошибка: {e}")
 
 def calculate_global_metrics(storage):
     """
@@ -234,29 +269,44 @@ def get_steps_structure():
     """
     Возвращает список ВСЕХ шагов с деталями, хронологией
     И КЛЮЧЕВЫМИ МЕТРИКАМИ ПРОИЗВОДИТЕЛЬНОСТИ.
-    Использует кеширование в памяти для ускорения повторных запросов.
+    Использует in-memory кеш и ФАЙЛОВЫЙ кеш для персистентности.
     """
-    global structure_with_metrics_cache
+    global structure_with_metrics_cache # Убедимся, что используем глобальный словарь
 
-    cache_key = 'all_steps_data'
-    if cache_key in structure_with_metrics_cache:
-        print("--- /steps/structure: Возврат данных из КЕША ---")
-        cached_data = structure_with_metrics_cache[cache_key]
-        # Проверяем тип на всякий случай перед дампом
+    # 1. Проверка in-memory кеша
+    if STRUCTURE_CACHE_KEY in structure_with_metrics_cache:
+        print("--- /steps/structure: Возврат данных из IN-MEMORY КЕША ---")
+        cached_data = structure_with_metrics_cache[STRUCTURE_CACHE_KEY]
         if isinstance(cached_data, list):
             json_string = json.dumps(cached_data, ensure_ascii=False)
             return Response(json_string, mimetype='application/json; charset=utf-8')
         else:
-            # Если в кеше что-то не то, очищаем и пересчитываем
-             print("--- /steps/structure: Ошибка - в кеше не список. Очистка кеша. ---")
-             del structure_with_metrics_cache[cache_key]
+             print("--- /steps/structure: Ошибка - в in-memory кеше не список. Очистка кеша. ---")
+             del structure_with_metrics_cache[STRUCTURE_CACHE_KEY] # Очищаем только in-memory
 
+    # 2. Проверка файлового кеша (если in-memory пуст)
+    print("--- /steps/structure: In-memory кеш пуст. Проверка файлового кеша... ---")
+    file_cached_data = load_cache_from_file(STRUCTURE_CACHE_FILE)
+    if file_cached_data is not None and isinstance(file_cached_data, list):
+        # Если из файла загрузили, СОХРАНЯЕМ в in-memory кеш для быстрых последующих запросов
+        structure_with_metrics_cache[STRUCTURE_CACHE_KEY] = file_cached_data
+        print("--- /steps/structure: Возврат данных из ФАЙЛОВОГО КЕША (также сохранены в in-memory) ---")
+        json_string = json.dumps(file_cached_data, ensure_ascii=False)
+        return Response(json_string, mimetype='application/json; charset=utf-8')
+    elif file_cached_data is not None: # Если загрузили, но это не список
+         print("--- /steps/structure: Ошибка - в файловом кеше не список. Кеш будет пересчитан. ---")
+         # Файл уже должен был быть удален функцией load_cache_from_file при ошибке
 
-    print("--- /steps/structure: Расчет данных (кеш пуст или очищен) ---")
+    # 3. Расчет данных (если оба кеша пусты или невалидны)
+    print("--- /steps/structure: Расчет данных (кеши пусты или невалидны) ---")
     start_time = time.time()
     try:
+        # ---> ВАШ СУЩЕСТВУЮЩИЙ КОД РАСЧЕТА ДАННЫХ <---
+        # ... (Запросы к БД: all_steps_query, submissions_agg_query, comments_query) ...
+        # ... (Формирование results_list) ...
         # 1. Запрос базовой структуры
         print("    [1/4] Запрос базовой структуры шагов...")
+        # ... (код запроса all_steps_query) ...
         all_steps_query = db.session.query(Step).options(
             joinedload(Step.lesson).joinedload(Lesson.module).joinedload(Module.course),
             joinedload(Step.additional_info)
@@ -265,13 +315,11 @@ def get_steps_structure():
         all_steps = all_steps_query.all()
         step_ids = [step.step_id for step in all_steps]
         print(f"    ... Найдено шагов: {len(all_steps)}")
-
-        if not all_steps:
-            print("--- Шаги не найдены. Возвращаем пустой список (не кешируем).")
-            return jsonify([])
+        if not all_steps: return jsonify([])
 
         # 2. Агрегаты Submissions
         print("    [2/4] Запрос агрегированных данных из Submissions...")
+        # ... (код запроса submissions_agg_query и создания submissions_data) ...
         submissions_agg_start = time.time()
         submissions_agg_query = db.session.query(
             Submission.step_id,
@@ -280,26 +328,18 @@ def get_steps_structure():
             func.count(distinct(Submission.user_id)).label("total_attempted_users"),
             func.count(distinct(case((Submission.status == 'correct', Submission.user_id)))).label("passed_correctly_users")
         ).filter(Submission.step_id.in_(step_ids)).group_by(Submission.step_id)
-
         submissions_agg_results = submissions_agg_query.all()
-
-        # ---> ИСПРАВЛЕННЫЙ БЛОК СОЗДАНИЯ submissions_data <---
         submissions_data = {
-            row.step_id: { # Ключ - step_id
-                # Значение - СЛОВАРЬ с метриками
-                "total_submissions": row.total_submissions or 0,
-                "correct_submissions": row.correct_submissions or 0,
-                "total_attempted_users": row.total_attempted_users or 0,
-                "passed_correctly_users": row.passed_correctly_users or 0,
-            }
-            for row in submissions_agg_results # Итерация по результатам запроса
+            row.step_id: {
+                "total_submissions": row.total_submissions or 0, "correct_submissions": row.correct_submissions or 0,
+                "total_attempted_users": row.total_attempted_users or 0, "passed_correctly_users": row.passed_correctly_users or 0,
+            } for row in submissions_agg_results
         }
-        # ------------------------------------------------------
         print(f"    ... Агрегаты Submissions получены (за {(time.time() - submissions_agg_start):.2f} сек)")
-
 
         # 3. Данные по комментариям
         print("    [3/4] Запрос данных по комментариям...")
+        # ... (код запроса comments_query и создания comments_data) ...
         comments_start = time.time()
         comments_query = db.session.query(
             Comment.step_id, func.count(Comment.comment_id).label("comments_count")
@@ -310,55 +350,42 @@ def get_steps_structure():
 
         # 4. Формирование результата
         print("    [4/4] Формирование итогового результата...")
+        # ... (код формирования results_list) ...
         results_list = []
         for step in all_steps:
-            step_data = { # Собираем все данные
-                "step_id": step.step_id,
-                "step_position": step.step_position,
-                "step_type": step.step_type,
-                "step_cost": step.step_cost,
-                "lesson_id": step.lesson.lesson_id if step.lesson else None,
-                "lesson_position": step.lesson.lesson_position if step.lesson else None,
-                "module_id": step.lesson.module.module_id if step.lesson and step.lesson.module else None,
-                "module_position": step.lesson.module.module_position if step.lesson and step.lesson.module else None,
+            # ... (код создания step_data) ...
+            step_data = {
+                "step_id": step.step_id, "step_position": step.step_position, "step_type": step.step_type, "step_cost": step.step_cost,
+                "lesson_id": step.lesson.lesson_id if step.lesson else None, "lesson_position": step.lesson.lesson_position if step.lesson else None,
+                "module_id": step.lesson.module.module_id if step.lesson and step.lesson.module else None, "module_position": step.lesson.module.module_position if step.lesson and step.lesson.module else None,
                 "module_title": step.lesson.module.title if step.lesson and step.lesson.module and hasattr(step.lesson.module, 'title') else None,
                 "course_id": step.lesson.module.course.course_id if step.lesson and step.lesson.module and step.lesson.module.course else None,
                 "course_title": step.lesson.module.course.title if step.lesson and step.lesson.module and step.lesson.module.course else None,
-                "step_title_short": step.additional_info.step_title_short if step.additional_info else None,
-                "step_title_full": step.additional_info.step_title_full if step.additional_info else None,
-                "difficulty": step.additional_info.difficulty if step.additional_info else None,
-                "discrimination": step.additional_info.discrimination if step.additional_info else None,
-                # Defaults
-                "users_passed": 0, "all_users_attempted": 0, "step_effectiveness": 0.0,
-                "success_rate": 0.0, "avg_attempts_per_passed_user": None, "comments_count": 0,
-                "avg_completion_time_seconds": None,
+                "step_title_short": step.additional_info.step_title_short if step.additional_info else None, "step_title_full": step.additional_info.step_title_full if step.additional_info else None,
+                "difficulty": step.additional_info.difficulty if step.additional_info else None, "discrimination": step.additional_info.discrimination if step.additional_info else None,
+                "users_passed": 0, "all_users_attempted": 0, "step_effectiveness": 0.0, "success_rate": 0.0,
+                "avg_attempts_per_passed_user": None, "comments_count": 0, "avg_completion_time_seconds": None,
             }
-
-            # Получаем данные из словаря submissions_data (теперь это должен быть словарь)
             step_submissions = submissions_data.get(step.step_id)
-            # Проверяем, что получили именно словарь (на всякий случай)
             if isinstance(step_submissions, dict):
-                passed = step_submissions.get("passed_correctly_users", 0) # Используем .get() для безопасности
-                attempted = step_submissions.get("total_attempted_users", 0)
-                total_subs = step_submissions.get("total_submissions", 0)
-                correct_subs = step_submissions.get("correct_submissions", 0)
-
-                step_data["users_passed"] = passed
-                step_data["all_users_attempted"] = attempted
+                passed = step_submissions.get("passed_correctly_users", 0); attempted = step_submissions.get("total_attempted_users", 0)
+                total_subs = step_submissions.get("total_submissions", 0); correct_subs = step_submissions.get("correct_submissions", 0)
+                step_data["users_passed"] = passed; step_data["all_users_attempted"] = attempted
                 step_data["step_effectiveness"] = (float(passed) / attempted) if attempted > 0 else 0.0
                 step_data["success_rate"] = (float(correct_subs) / total_subs) if total_subs > 0 else 0.0
                 step_data["avg_attempts_per_passed_user"] = (float(total_subs) / passed) if passed > 0 else None
-            elif step_submissions is not None:
-                 # Логгируем, если получили что-то неожиданное
-                 print(f"!!! ПРЕДУПРЕЖДЕНИЕ: Ожидался dict в submissions_data для step_id {step.step_id}, но получен {type(step_submissions)}")
-
-
+            elif step_submissions is not None: print(f"!!! ПРЕДУПРЕЖДЕНИЕ: Ожидался dict в submissions_data для step_id {step.step_id}, но получен {type(step_submissions)}")
             step_data["comments_count"] = comments_data.get(step.step_id, 0)
             results_list.append(step_data)
+        # ---> КОНЕЦ СУЩЕСТВУЮЩЕГО КОДА РАСЧЕТА <---
 
-        # Сохраняем в кеш
-        structure_with_metrics_cache[cache_key] = results_list
-        print(f"--- /steps/structure: Данные рассчитаны и сохранены в кеш (ключ: {cache_key}) ---")
+        # 5. СОХРАНЕНИЕ В ОБА КЕША
+        if results_list: # Сохраняем только если есть результаты
+            structure_with_metrics_cache[STRUCTURE_CACHE_KEY] = results_list # Сохраняем в in-memory
+            save_cache_to_file(results_list, STRUCTURE_CACHE_FILE) # Сохраняем в файл
+        else:
+             print("--- /steps/structure: Расчет вернул пустой список. Кеши не обновлены. ---")
+
 
         total_duration = time.time() - start_time
         print(f"--- Формирование списка шагов С МЕТРИКАМИ завершено (за {total_duration:.2f} сек).")
@@ -366,12 +393,15 @@ def get_steps_structure():
         return Response(json_string, mimetype='application/json; charset=utf-8')
 
     except Exception as e:
-        if cache_key in structure_with_metrics_cache:
-            del structure_with_metrics_cache[cache_key]
+        # Очищаем in-memory кеш при ошибке расчета
+        if STRUCTURE_CACHE_KEY in structure_with_metrics_cache:
+            del structure_with_metrics_cache[STRUCTURE_CACHE_KEY]
+        # Файловый кеш НЕ удаляем здесь, т.к. он мог быть рабочим до ошибки
+
         total_duration = time.time() - start_time
         print(f"!!! Ошибка при расчете структуры шагов С МЕТРИКАМИ (за {total_duration:.2f} сек): {e}")
         import traceback
-        traceback.print_exc() # Печатаем полный traceback
+        traceback.print_exc()
         return jsonify({"error": "Could not retrieve step structure with metrics", "details": str(e)}), 500
 
 
