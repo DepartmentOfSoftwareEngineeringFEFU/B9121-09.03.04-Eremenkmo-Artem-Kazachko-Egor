@@ -2,17 +2,20 @@ import json
 import math
 import os
 from flask import Response, Blueprint, jsonify, request, current_app, abort
-from .models import db, Submission, Learner, Step, Comment, Lesson, Module, AdditionalStepInfo, Course
+from .models import db, Submission, Learner, Step, Comment, Lesson, Module, AdditionalStepInfo, Course, enrollment_table
 from sqlalchemy import func, distinct, case, cast, Float, text, select
 from .app_state import calculated_metrics_storage, structure_with_metrics_cache   
 from sqlalchemy.orm import joinedload, aliased
 import time
+import traceback
 
 metrics_bp = Blueprint('metrics', __name__, url_prefix='/api/metrics')
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache') # Папка для кеша рядом с этим файлом
 STRUCTURE_CACHE_FILE = os.path.join(CACHE_DIR, 'structure_cache.json')
 STRUCTURE_CACHE_KEY = 'all_steps_data' # Ключ для in-memory кеша
+TEACHERS_CACHE_FILE = os.path.join(CACHE_DIR, 'teachers_cache.json')
+COMPLETION_RATES_CACHE_FILE = os.path.join(CACHE_DIR, 'completion_rates_cache.json')
 
 # --- Функции для работы с файловым кешем ---
 def load_cache_from_file(filepath):
@@ -47,193 +50,169 @@ def save_cache_to_file(data, filepath):
 
 def calculate_global_metrics(storage):
     """
-    Рассчитывает глобальные метрики (преподаватели, результативность по диапазонам)
-    и сохраняет их в переданный словарь storage.
+    Рассчитывает глобальные метрики:
+    1. Список преподавателей (глобально).
+    2. Результативность по диапазонам (ДЛЯ КАЖДОГО КУРСА).
+    Сохраняет их в переданный словарь storage.
     """
-    print("--- Начало расчета глобальных метрик для хранилища ---")
+    print("--- Начало расчета ГЛОБАЛЬНЫХ метрик (учителя + результативность ПО КУРСАМ) ---")
     global_calc_start_time = time.time()
+    calculation_successful = True
 
-    # 1. Расчет списка преподавателей (оставляем как было)
+    # --- 1. Расчет списка преподавателей (без изменений) ---
     print("    [1/2] Расчет списка преподавателей...")
     teachers_start_time = time.time()
     try:
         teachers = db.session.query(Learner).filter(Learner.is_learner == False).order_by(Learner.last_name, Learner.first_name).all()
         teacher_list = []
+        # ... (код формирования teacher_list как был) ...
         for teacher in teachers:
-            teacher_list.append({
-                "user_id": teacher.user_id, "first_name": teacher.first_name, "last_name": teacher.last_name,
-                "last_login": teacher.last_login.isoformat() if teacher.last_login else None,
-                "data_joined": teacher.data_joined.isoformat() if teacher.data_joined else None
-            })
+             teacher_list.append({
+                 "user_id": teacher.user_id, "first_name": teacher.first_name, "last_name": teacher.last_name,
+                 "last_login": teacher.last_login.isoformat() if teacher.last_login else None,
+                 "data_joined": teacher.data_joined.isoformat() if teacher.data_joined else None
+             })
         storage['teachers'] = teacher_list
+        save_cache_to_file(teacher_list, TEACHERS_CACHE_FILE)
         print(f"    ... Найдено преподавателей: {len(teacher_list)} (за {(time.time() - teachers_start_time):.2f} сек)")
     except Exception as e:
+        calculation_successful = False
         print(f"!!! Ошибка при расчете списка преподавателей: {e}")
         storage['teachers'] = {"error": "Could not calculate teachers", "details": str(e)}
+        traceback.print_exc()
 
-    # 2. Расчет результативности курса по диапазонам
-    print("    [2/2] Расчет результативности курса по диапазонам...")
-    completion_start_time = time.time()
-    # Ключ в хранилище будет теперь более общим
-    storage_key = 'course_completion_rates' # ИЗМЕНЕНО С course_completion_rate_80
+    # --- 2. Расчет результативности ДЛЯ КАЖДОГО КУРСА ---
+    print("\n    [2/2] Расчет результативности ПО КУРСАМ...")
+    storage_key_courses = 'course_completion_rates' # Общий ключ для данных по курсам
+    course_completion_data = {}
+    storage[storage_key_courses] = {} # Инициализируем пустой словарь для курсов
 
     try:
-        # Шаг 1: Получаем ID шагов, требующих оценки (submittable)
-        submittable_steps_query = db.session.query(Step.step_id).filter(Step.step_cost.isnot(None), Step.step_cost > 0)
-        submittable_step_ids = [s.step_id for s in submittable_steps_query.all()]
-        total_submittable_steps = len(submittable_step_ids)
-        print(f"        Найдено оцениваемых шагов: {total_submittable_steps}")
+        # Получаем все курсы из БД
+        all_courses = db.session.query(Course).all()
+        print(f"        Найдено курсов для расчета: {len(all_courses)}")
 
-        # Шаг 2: Считаем общее количество учеников
-        total_learners = db.session.query(func.count(Learner.user_id)).filter(Learner.is_learner == True).scalar() or 0 # Только is_learner=True
-        print(f"        Найдено учеников (is_learner=True): {total_learners}")
+        if not all_courses:
+             print("        Нет курсов в БД, расчет результативности пропущен.")
+             return # Выходим, если курсов нет
 
-        # Готовим структуру результата по умолчанию
-        completion_result = {
-            "total_learners": total_learners,
-            "total_submittable_steps": total_submittable_steps,
-            "ranges": {
-                "gte_80": {"threshold_steps": 0, "count": 0, "percentage": 0.0},
-                "gte_50_lt_80": {"threshold_steps": 0, "count": 0, "percentage": 0.0},
-                "gte_25_lt_50": {"threshold_steps": 0, "count": 0, "percentage": 0.0},
-                "lt_25": {"threshold_steps": 0, "count": 0, "percentage": 0.0}
-            },
-            "message": "Calculation not performed yet."
-        }
+        # Цикл по каждому курсу
+        for course in all_courses:
+            course_id = course.course_id
+            course_title = course.title
+            print(f"\n        --- Расчет для курса ID={course_id} ('{course_title}') ---")
+            course_calc_start_time = time.time()
 
-        # Если нет оцениваемых шагов или учеников, расчет невозможен
-        if total_submittable_steps == 0:
-            completion_result["message"] = "No steps requiring submission found."
-            storage[storage_key] = completion_result # Сохраняем результат по умолчанию
-            print(f"    ... Расчет результативности пропущен (нет оцениваемых шагов) (за {(time.time() - completion_start_time):.2f} сек)")
-            return # Выходим из функции расчета метрик
-        if total_learners == 0:
-             completion_result["message"] = "No learners found."
-             storage[storage_key] = completion_result
-             print(f"    ... Расчет результативности пропущен (нет учеников) (за {(time.time() - completion_start_time):.2f} сек)")
-             return
+            # --- Логика расчета для ОДНОГО курса (адаптирована из старой версии) ---
+            try:
+                # Шаг 2.1: Получаем ID оцениваемых шагов ДАННОГО курса
+                submittable_steps_query = db.session.query(Step.step_id)\
+                    .join(Lesson, Step.lesson_id == Lesson.lesson_id)\
+                    .join(Module, Lesson.module_id == Module.module_id)\
+                    .filter(Module.course_id == course_id, # <-- Фильтр по курсу
+                            Step.step_cost.isnot(None),
+                            Step.step_cost > 0)
+                submittable_step_ids = [s.step_id for s in submittable_steps_query.all()]
+                total_submittable_steps = len(submittable_step_ids)
+                print(f"            Найдено оцениваемых шагов: {total_submittable_steps}")
 
-        # Шаг 3: Определяем пороговые значения (количество шагов)
-        # Используем math.ceil, чтобы округлить вверх (>= порога)
-        threshold_80_steps = math.ceil(total_submittable_steps * 0.80)
-        threshold_50_steps = math.ceil(total_submittable_steps * 0.50)
-        threshold_25_steps = math.ceil(total_submittable_steps * 0.25)
+                # Шаг 2.2: Считаем общее количество УЧЕНИКОВ, ЗАПИСАННЫХ на ДАННЫЙ курс
+                total_learners_on_course = db.session.query(func.count(Learner.user_id))\
+                    .join(enrollment_table, Learner.user_id == enrollment_table.c.learner_id)\
+                    .filter(enrollment_table.c.course_id == course_id, # <-- Фильтр по курсу
+                            Learner.is_learner == True)\
+                    .scalar() or 0
+                print(f"            Найдено учеников на курсе: {total_learners_on_course}")
 
-        # Сохраняем пороги в результат
-        completion_result["ranges"]["gte_80"]["threshold_steps"] = threshold_80_steps
-        completion_result["ranges"]["gte_50_lt_80"]["threshold_steps"] = threshold_50_steps
-        completion_result["ranges"]["gte_25_lt_50"]["threshold_steps"] = threshold_25_steps
-        completion_result["ranges"]["lt_25"]["threshold_steps"] = threshold_25_steps # Нижняя граница
+                # Структура результата для этого курса
+                completion_result = {
+                    "course_id": course_id, "course_title": course_title,
+                    "total_learners_on_course": total_learners_on_course,
+                    "total_submittable_steps": total_submittable_steps,
+                    "ranges": { "gte_80": {}, "gte_50_lt_80": {}, "gte_25_lt_50": {}, "lt_25": {} }, # Заполним ниже
+                    "message": "Calculation started."
+                }
 
-        print(f"        Пороги (шагов): >=80% -> {threshold_80_steps}, >=50% -> {threshold_50_steps}, >=25% -> {threshold_25_steps}")
+                # Проверки для пропуска расчета
+                if total_submittable_steps == 0:
+                    completion_result["message"] = "No steps requiring submission found for this course.";
+                    storage[storage_key_courses][course_id] = completion_result; continue # Переход к следующему курсу
+                if total_learners_on_course == 0:
+                    completion_result["message"] = "No learners enrolled in this course.";
+                    storage[storage_key_courses][course_id] = completion_result; continue # Переход к следующему курсу
 
-        # Шаг 4: Подзапрос для подсчета пройденных шагов КАЖДЫМ пользователем
-        user_steps_passed_subquery = db.session.query(
-            Submission.user_id,
-            func.count(distinct(Submission.step_id)).label('steps_passed_count')
-        ).filter(
-            Submission.step_id.in_(submittable_step_ids), # Только оцениваемые шаги
-            Submission.status == 'correct',              # Только верные попытки
-            Submission.user_id.in_(db.session.query(Learner.user_id).filter(Learner.is_learner == True)) # Только для учеников!
-        ).group_by(Submission.user_id).subquery()
-        print(f"        Подзапрос user_steps_passed_subquery определен.")
+                # Шаг 2.3: Пороги (без изменений)
+                threshold_80_steps = math.ceil(total_submittable_steps * 0.80); threshold_50_steps = math.ceil(total_submittable_steps * 0.50); threshold_25_steps = math.ceil(total_submittable_steps * 0.25)
+                print(f"            Пороги (шагов): >=80%={threshold_80_steps}, >=50%={threshold_50_steps}, >=25%={threshold_25_steps}")
 
-        # Шаг 5: Основной запрос - агрегируем результаты подзапроса по диапазонам
-        # Считаем количество пользователей в каждом диапазоне КРОМЕ <25%
-        range_counts_query = db.session.query(
-            # Диапазон >= 80%
-            func.sum(case(
-                # Передаем кортеж (условие, результат) напрямую как позиционный аргумент
-                (user_steps_passed_subquery.c.steps_passed_count >= threshold_80_steps, 1),
-                else_=0
-            )).label("count_gte_80"),
+                # Шаг 2.4: Подзапрос - сколько оцениваемых шагов прошел каждый УЧЕНИК НА ЭТОМ КУРСЕ
+                user_steps_passed_subquery = db.session.query(
+                    Submission.user_id, func.count(distinct(Submission.step_id)).label('steps_passed_count')
+                ).join(enrollment_table, Submission.user_id == enrollment_table.c.learner_id)\
+                 .filter(
+                    enrollment_table.c.course_id == course_id, # <-- Фильтр по курсу
+                    Submission.step_id.in_(submittable_step_ids), # Только оцениваемые шаги ЭТОГО курса
+                    Submission.status == 'correct',
+                    Submission.user.has(Learner.is_learner == True) # Убедимся, что это ученик
+                 ).group_by(Submission.user_id).subquery()
+                print(f"            Подзапрос user_steps_passed определен.")
 
-            # Диапазон 50% <= x < 80%
-            func.sum(case(
-                # Передаем кортеж (условие, результат) напрямую как позиционный аргумент
-                (
-                    (user_steps_passed_subquery.c.steps_passed_count >= threshold_50_steps) &
-                    (user_steps_passed_subquery.c.steps_passed_count < threshold_80_steps),
-                    1 # Результат если True
-                ),
-                else_=0
-            )).label("count_gte_50_lt_80"),
+                # Шаг 2.5: Основной запрос для подсчета по диапазонам (без изменений, работает с подзапросом)
+                range_counts_query = db.session.query(
+                    # ... (определение label("count_gte_80"), label("count_gte_50_lt_80"), label("count_gte_25_lt_50") как было) ...
+                     func.sum(case((user_steps_passed_subquery.c.steps_passed_count >= threshold_80_steps, 1), else_=0)).label("count_gte_80"),
+                     func.sum(case(((user_steps_passed_subquery.c.steps_passed_count >= threshold_50_steps) & (user_steps_passed_subquery.c.steps_passed_count < threshold_80_steps), 1), else_=0)).label("count_gte_50_lt_80"),
+                     func.sum(case(((user_steps_passed_subquery.c.steps_passed_count >= threshold_25_steps) & (user_steps_passed_subquery.c.steps_passed_count < threshold_50_steps), 1), else_=0)).label("count_gte_25_lt_50")
+                ).select_from(user_steps_passed_subquery)
+                print(f"            Выполняется агрегирующий запрос...")
+                range_counts_result = range_counts_query.first()
+                print(f"            Агрегирующий запрос завершен.")
 
-            # Диапазон 25% <= x < 50%
-            func.sum(case(
-                # Передаем кортеж (условие, результат) напрямую как позиционный аргумент
-                (
-                    (user_steps_passed_subquery.c.steps_passed_count >= threshold_25_steps) &
-                    (user_steps_passed_subquery.c.steps_passed_count < threshold_50_steps),
-                    1 # Результат если True
-                ),
-                else_=0
-            )).label("count_gte_25_lt_50")
+                # Шаг 2.6: Извлечение и расчет диапазона <25% (используем total_learners_on_course)
+                count_gte_80 = int(range_counts_result.count_gte_80 if range_counts_result else 0)
+                count_gte_50_lt_80 = int(range_counts_result.count_gte_50_lt_80 if range_counts_result else 0)
+                count_gte_25_lt_50 = int(range_counts_result.count_gte_25_lt_50 if range_counts_result else 0)
+                count_lt_25 = int(total_learners_on_course - count_gte_80 - count_gte_50_lt_80 - count_gte_25_lt_50)
+                print(f"            Распределение (кол-во): >=80%={count_gte_80}, 50-79%={count_gte_50_lt_80}, 25-49%={count_gte_25_lt_50}, <25%={count_lt_25}")
+                # Проверка
+                if (count_gte_80 + count_gte_50_lt_80 + count_gte_25_lt_50 + count_lt_25) != total_learners_on_course:
+                    print("!!! ПРЕДУПРЕЖДЕНИЕ: Сумма учеников по диапазонам не сходится с числом учеников на курсе!")
 
-        ).select_from(user_steps_passed_subquery) # Явно указываем FROM для подзапроса
+                # Шаг 2.7: Заполнение результата для ЭТОГО курса (считаем % от total_learners_on_course)
+                # ... (заполнение completion_result['ranges'][...] как было, но используя count_* и total_learners_on_course) ...
+                completion_result["ranges"]["gte_80"] = {"threshold_steps": int(threshold_80_steps), "count": count_gte_80, "percentage": float(count_gte_80 / total_learners_on_course) if total_learners_on_course > 0 else 0.0}
+                completion_result["ranges"]["gte_50_lt_80"] = {"threshold_steps": int(threshold_50_steps), "count": count_gte_50_lt_80, "percentage": float(count_gte_50_lt_80 / total_learners_on_course) if total_learners_on_course > 0 else 0.0}
+                completion_result["ranges"]["gte_25_lt_50"] = {"threshold_steps": int(threshold_25_steps), "count": count_gte_25_lt_50, "percentage": float(count_gte_25_lt_50 / total_learners_on_course) if total_learners_on_course > 0 else 0.0}
+                completion_result["ranges"]["lt_25"] = {"threshold_steps": int(threshold_25_steps), "count": count_lt_25, "percentage": float(count_lt_25 / total_learners_on_course) if total_learners_on_course > 0 else 0.0}
+                completion_result["message"] = "Calculation successful."
 
-        print(f"        Выполняется основной агрегирующий запрос...")
-        range_counts_result = range_counts_query.first() # Должна вернуться одна строка с агрегатами
-        print(f"        Агрегирующий запрос завершен.")
+                # Сохраняем результат для текущего course_id
+                storage[storage_key_courses][course_id] = completion_result
+                print(f"        --- Расчет для курса ID={course_id} завершен (за {(time.time() - course_calc_start_time):.2f} сек) ---")
 
-        # Извлекаем счетчики (или 0, если результат None)
-        count_gte_80 = range_counts_result.count_gte_80 if range_counts_result else 0
-        count_gte_50_lt_80 = range_counts_result.count_gte_50_lt_80 if range_counts_result else 0
-        count_gte_25_lt_50 = range_counts_result.count_gte_25_lt_50 if range_counts_result else 0
+            # Обработка ошибки для ОДНОГО курса, чтобы не прерывать весь цикл
+            except Exception as course_err:
+                 print(f"!!! ОШИБКА при расчете результативности для курса ID={course_id}: {course_err}")
+                 storage[storage_key_courses][course_id] = { # Записываем ошибку для этого курса
+                      "course_id": course_id, "course_title": course_title, "error": "Calculation failed", "details": str(course_err)
+                 }
+                 traceback.print_exc() # Выводим трассировку
 
-        # Шаг 6: Считаем количество для диапазона <25%
-        # Это все ученики МИНУС те, кто попал в верхние диапазоны
-        count_lt_25 = total_learners - count_gte_80 - count_gte_50_lt_80 - count_gte_25_lt_50
-
-        print(f"        Распределение по диапазонам (кол-во): >=80% -> {count_gte_80}, 50-79% -> {count_gte_50_lt_80}, 25-49% -> {count_gte_25_lt_50}, <25% -> {count_lt_25}")
-        # Проверка: сумма должна быть равна total_learners
-        if (count_gte_80 + count_gte_50_lt_80 + count_gte_25_lt_50 + count_lt_25) != total_learners:
-             print("!!! ПРЕДУПРЕЖДЕНИЕ: Сумма учеников по диапазонам не сходится с общим числом учеников!")
-
-        # Шаг 7: Заполняем результаты и считаем проценты
-        # Убедимся, что все счетчики являются int
-        count_gte_80 = int(count_gte_80)
-        count_gte_50_lt_80 = int(count_gte_50_lt_80)
-        count_gte_25_lt_50 = int(count_gte_25_lt_50)
-        # count_lt_25 уже должен быть int, т.к. получен вычитанием int
-        count_lt_25 = int(count_lt_25) # Можно добавить для надежности
-
-        # Заполняем словарь результатов, приводя проценты к float
-        completion_result["ranges"]["gte_80"]["count"] = count_gte_80
-        completion_result["ranges"]["gte_80"]["percentage"] = float(count_gte_80 / total_learners) if total_learners > 0 else 0.0
-
-        completion_result["ranges"]["gte_50_lt_80"]["count"] = count_gte_50_lt_80
-        completion_result["ranges"]["gte_50_lt_80"]["percentage"] = float(count_gte_50_lt_80 / total_learners) if total_learners > 0 else 0.0
-
-        completion_result["ranges"]["gte_25_lt_50"]["count"] = count_gte_25_lt_50
-        completion_result["ranges"]["gte_25_lt_50"]["percentage"] = float(count_gte_25_lt_50 / total_learners) if total_learners > 0 else 0.0
-
-        completion_result["ranges"]["lt_25"]["count"] = count_lt_25
-        completion_result["ranges"]["lt_25"]["percentage"] = float(count_lt_25 / total_learners) if total_learners > 0 else 0.0
-
-        # Убедимся, что и другие числовые поля в корне словаря являются int/float
-        completion_result["total_learners"] = int(total_learners)
-        completion_result["total_submittable_steps"] = int(total_submittable_steps)
-        completion_result["ranges"]["gte_80"]["threshold_steps"] = int(threshold_80_steps)
-        completion_result["ranges"]["gte_50_lt_80"]["threshold_steps"] = int(threshold_50_steps)
-        completion_result["ranges"]["gte_25_lt_50"]["threshold_steps"] = int(threshold_25_steps)
-        completion_result["ranges"]["lt_25"]["threshold_steps"] = int(threshold_25_steps) # Был threshold_25_steps, оставим его
-
-        completion_result["message"] = "Calculation successful."
-        storage[storage_key] = completion_result # Сохраняем итоговый результат
-
-        print(f"    ... Расчет результативности завершен (за {(time.time() - completion_start_time):.2f} сек)")
+        if calculation_successful:
+             save_cache_to_file(storage[storage_key_courses], COMPLETION_RATES_CACHE_FILE)
+             print("    ... Данные по результативности курсов сохранены в кеш.")
+        else:
+             storage[storage_key_courses] = {"error": "Calculation failed for one or more courses."} # Записываем общую ошибку в storage
+             print("!!! ОШИБКА: Расчет результативности завершился с ошибками для некоторых курсов. Кеш НЕ сохранен.")
 
     except Exception as e:
-        print(f"!!! Ошибка при расчете результативности курса: {e}")
-        # Сохраняем ошибку в хранилище
-        storage[storage_key] = {"error": "Could not calculate completion rates", "details": str(e)}
-        # Дополнительно выводим трассировку ошибки
-        import traceback
+        print(f"!!! КРИТИЧЕСКАЯ ОШИБКА при расчете результативности всех курсов: {e}")
+        # Можно добавить запись об общей ошибке, если нужно
+        # storage[storage_key_courses] = {"error": "Failed to calculate for all courses", "details": str(e)}
         traceback.print_exc()
 
     total_global_calc_duration = time.time() - global_calc_start_time
-    print(f"--- Расчет глобальных метрик завершен (общее время: {total_global_calc_duration:.2f} сек) ---")
+    print(f"--- Расчет глобальных метрик (включая все курсы) завершен (общее время: {total_global_calc_duration:.2f} сек) ---")
 
 # --- ИЗМЕНЕНИЕ ЭНДПОИНТОВ, ЧТОБЫ ОНИ БРАЛИ ДАННЫЕ ИЗ ХРАНИЛИЩА ---
 
@@ -252,157 +231,205 @@ def get_teachers():
          return Response(json_string, mimetype='application/json; charset=utf-8')
 
 
-@metrics_bp.route("/course/completion_rates", methods=['GET']) # НОВЫЙ URL
-def get_course_completion_rates():
-    """Возвращает ПРЕДВАРИТЕЛЬНО РАССЧИТАННУЮ результативность курса по диапазонам."""
-    storage_key = 'course_completion_rates' # Используем новый ключ
-    completion_data = calculated_metrics_storage.get(storage_key, {"error": f"Completion rate data ('{storage_key}') not pre-calculated."})
+@metrics_bp.route("/course/<int:course_id>/completion_rates", methods=['GET'])
+def get_course_completion_rates(course_id):
+    """
+    Возвращает ПРЕДВАРИТЕЛЬНО РАССЧИТАННУЮ результативность
+    для УКАЗАННОГО курса по диапазонам.
+    """
+    storage_key = 'course_completion_rates'
+    # Ищем данные для конкретного course_id внутри словаря
+    all_courses_data = calculated_metrics_storage.get(storage_key, {})
+    completion_data = all_courses_data.get(course_id, {"error": f"Completion rate data for course_id={course_id} not pre-calculated or course not found."})
 
-    # Используем ручной json.dumps для контроля ensure_ascii=False
-    status_code = 500 if isinstance(completion_data, dict) and "error" in completion_data else 200
-    json_string = json.dumps(completion_data, ensure_ascii=False, indent=2) # Добавил indent для читаемости
+    status_code = 404 if isinstance(completion_data, dict) and "error" in completion_data else 200
+    json_string = json.dumps(completion_data, ensure_ascii=False, indent=2)
     return Response(json_string, status=status_code, mimetype='application/json; charset=utf-8')
 
 
 @metrics_bp.route("/steps/structure", methods=['GET'])
 def get_steps_structure():
     """
-    Возвращает список ВСЕХ шагов с деталями, хронологией
-    И КЛЮЧЕВЫМИ МЕТРИКАМИ ПРОИЗВОДИТЕЛЬНОСТИ.
-    Использует in-memory кеш и ФАЙЛОВЫЙ кеш для персистентности.
+    Возвращает список шагов с деталями и метриками.
+    Принимает НЕОБЯЗАТЕЛЬНЫЙ параметр ?course_id= для фильтрации.
+    Использует кэш (in-memory и файловый), зависящий от course_id.
     """
-    global structure_with_metrics_cache # Убедимся, что используем глобальный словарь
+    global structure_with_metrics_cache
+    course_id_filter = request.args.get('course_id', type=int) # Получаем ID курса из запроса
+
+    # Определяем ключ кеша и имя файла в зависимости от наличия фильтра
+    if course_id_filter is not None:
+        cache_key = f"structure_{course_id_filter}"
+        cache_filename = f"structure_cache_{course_id_filter}.json"
+        print(f"--- /steps/structure: Запрос для курса ID={course_id_filter} ---")
+    else:
+        cache_key = "structure_all"
+        cache_filename = "structure_cache_all.json"
+        print(f"--- /steps/structure: Запрос для ВСЕХ курсов ---")
+
+    cache_filepath = os.path.join(CACHE_DIR, cache_filename)
 
     # 1. Проверка in-memory кеша
-    if STRUCTURE_CACHE_KEY in structure_with_metrics_cache:
-        print("--- /steps/structure: Возврат данных из IN-MEMORY КЕША ---")
-        cached_data = structure_with_metrics_cache[STRUCTURE_CACHE_KEY]
-        if isinstance(cached_data, list):
+    if cache_key in structure_with_metrics_cache:
+        print(f"--- /steps/structure: Возврат данных из IN-MEMORY КЕША (ключ: {cache_key}) ---")
+        cached_data = structure_with_metrics_cache[cache_key]
+        # Доп. проверка на случай пустого кеша
+        if cached_data is not None and isinstance(cached_data, list):
             json_string = json.dumps(cached_data, ensure_ascii=False)
             return Response(json_string, mimetype='application/json; charset=utf-8')
-        else:
-             print("--- /steps/structure: Ошибка - в in-memory кеше не список. Очистка кеша. ---")
-             del structure_with_metrics_cache[STRUCTURE_CACHE_KEY] # Очищаем только in-memory
+        else: # Если в кеше не список или None
+             print(f"--- /steps/structure: Невалидные данные в IN-MEMORY КЕШЕ (ключ: {cache_key}). Очистка. ---")
+             del structure_with_metrics_cache[cache_key]
 
-    # 2. Проверка файлового кеша (если in-memory пуст)
-    print("--- /steps/structure: In-memory кеш пуст. Проверка файлового кеша... ---")
-    file_cached_data = load_cache_from_file(STRUCTURE_CACHE_FILE)
+    # 2. Проверка файлового кеша
+    print(f"--- /steps/structure: Проверка файлового кеша ({cache_filepath})... ---")
+    file_cached_data = load_cache_from_file(cache_filepath)
     if file_cached_data is not None and isinstance(file_cached_data, list):
-        # Если из файла загрузили, СОХРАНЯЕМ в in-memory кеш для быстрых последующих запросов
-        structure_with_metrics_cache[STRUCTURE_CACHE_KEY] = file_cached_data
-        print("--- /steps/structure: Возврат данных из ФАЙЛОВОГО КЕША (также сохранены в in-memory) ---")
+        structure_with_metrics_cache[cache_key] = file_cached_data # Сохраняем в in-memory
+        print(f"--- /steps/structure: Возврат данных из ФАЙЛОВОГО КЕША (ключ: {cache_key}) ---")
         json_string = json.dumps(file_cached_data, ensure_ascii=False)
         return Response(json_string, mimetype='application/json; charset=utf-8')
-    elif file_cached_data is not None: # Если загрузили, но это не список
-         print("--- /steps/structure: Ошибка - в файловом кеше не список. Кеш будет пересчитан. ---")
-         # Файл уже должен был быть удален функцией load_cache_from_file при ошибке
+    elif file_cached_data is not None:
+         print(f"--- /steps/structure: Невалидные данные в ФАЙЛОВОМ КЕШЕ ({cache_filepath}). Кеш будет пересчитан. ---")
+         # Файл уже удален функцией load_cache_from_file
 
-    # 3. Расчет данных (если оба кеша пусты или невалидны)
-    print("--- /steps/structure: Расчет данных (кеши пусты или невалидны) ---")
+    # 3. Расчет данных (если кеши пусты/невалидны)
+    print(f"--- /steps/structure: Расчет данных (ключ кеша: {cache_key}) ---")
     start_time = time.time()
     try:
-        # ---> ВАШ СУЩЕСТВУЮЩИЙ КОД РАСЧЕТА ДАННЫХ <---
-        # ... (Запросы к БД: all_steps_query, submissions_agg_query, comments_query) ...
-        # ... (Формирование results_list) ...
-        # 1. Запрос базовой структуры
-        print("    [1/4] Запрос базовой структуры шагов...")
-        # ... (код запроса all_steps_query) ...
+        # 1. Запрос базовой структуры С УЧЕТОМ ФИЛЬТРА course_id
         all_steps_query = db.session.query(Step).options(
             joinedload(Step.lesson).joinedload(Lesson.module).joinedload(Module.course),
             joinedload(Step.additional_info)
-        ).join(Step.lesson).join(Lesson.module).join(Module.course)\
-         .order_by(Course.course_id, Module.module_position, Lesson.lesson_position, Step.step_position)
-        all_steps = all_steps_query.all()
-        step_ids = [step.step_id for step in all_steps]
-        print(f"    ... Найдено шагов: {len(all_steps)}")
-        if not all_steps: return jsonify([])
+        ).join(Step.lesson).join(Lesson.module).join(Module.course) # Join обязателен для фильтра и сортировки
 
-        # 2. Агрегаты Submissions
+        if course_id_filter is not None:
+            # ---> ПРИМЕНЯЕМ ФИЛЬТР ПО КУРСУ <---
+            all_steps_query = all_steps_query.filter(Module.course_id == course_id_filter)
+            print(f"    [1/4] Запрос структуры шагов для курса ID={course_id_filter}...")
+        else:
+            print(f"    [1/4] Запрос структуры ВСЕХ шагов...")
+
+        # Сортировка остается прежней
+        all_steps_query = all_steps_query.order_by(Course.course_id, Module.module_position, Lesson.lesson_position, Step.step_position)
+        all_steps = all_steps_query.all()
+        step_ids = [step.step_id for step in all_steps] # Получаем ID ТОЛЬКО отфильтрованных шагов
+        print(f"    ... Найдено шагов для обработки: {len(all_steps)}")
+
+        if not all_steps:
+             # Если шагов нет (для этого курса или вообще), кешируем пустой список
+             structure_with_metrics_cache[cache_key] = []
+             save_cache_to_file([], cache_filepath)
+             return jsonify([])
+
+        # 2. Агрегаты Submissions (запрос выполняется только для нужных step_ids)
         print("    [2/4] Запрос агрегированных данных из Submissions...")
-        # ... (код запроса submissions_agg_query и создания submissions_data) ...
         submissions_agg_start = time.time()
+        # ... (код submissions_agg_query и submissions_data как был, он использует актуальный step_ids) ...
         submissions_agg_query = db.session.query(
             Submission.step_id,
             func.count(Submission.submission_id).label("total_submissions"),
             func.sum(case((Submission.status == 'correct', 1), else_=0)).label("correct_submissions"),
             func.count(distinct(Submission.user_id)).label("total_attempted_users"),
             func.count(distinct(case((Submission.status == 'correct', Submission.user_id)))).label("passed_correctly_users")
-        ).filter(Submission.step_id.in_(step_ids)).group_by(Submission.step_id)
+        ).filter(Submission.step_id.in_(step_ids)).group_by(Submission.step_id) # Фильтр УЖЕ по нужным ID
         submissions_agg_results = submissions_agg_query.all()
-        submissions_data = {
-            row.step_id: {
-                "total_submissions": row.total_submissions or 0, "correct_submissions": row.correct_submissions or 0,
-                "total_attempted_users": row.total_attempted_users or 0, "passed_correctly_users": row.passed_correctly_users or 0,
-            } for row in submissions_agg_results
-        }
+        submissions_data = { row.step_id: { "total_submissions": row.total_submissions or 0, "correct_submissions": row.correct_submissions or 0, "total_attempted_users": row.total_attempted_users or 0, "passed_correctly_users": row.passed_correctly_users or 0 } for row in submissions_agg_results }
         print(f"    ... Агрегаты Submissions получены (за {(time.time() - submissions_agg_start):.2f} сек)")
 
-        # 3. Данные по комментариям
+
+        # 3. Данные по комментариям (запрос выполняется только для нужных step_ids)
         print("    [3/4] Запрос данных по комментариям...")
-        # ... (код запроса comments_query и создания comments_data) ...
         comments_start = time.time()
-        comments_query = db.session.query(
-            Comment.step_id, func.count(Comment.comment_id).label("comments_count")
-        ).filter(Comment.step_id.in_(step_ids)).group_by(Comment.step_id)
+        # ... (код comments_query и comments_data как был, он использует актуальный step_ids) ...
+        comments_query = db.session.query(Comment.step_id, func.count(Comment.comment_id).label("comments_count")).filter(Comment.step_id.in_(step_ids)).group_by(Comment.step_id)
         comments_results = comments_query.all()
         comments_data = {row.step_id: row.comments_count or 0 for row in comments_results}
         print(f"    ... Данные по комментариям получены (за {(time.time() - comments_start):.2f} сек)")
 
-        # 4. Формирование результата
+        # 4. Формирование результата (без изменений, работает с all_steps)
         print("    [4/4] Формирование итогового результата...")
-        # ... (код формирования results_list) ...
+        # ... (код формирования results_list как был) ...
         results_list = []
         for step in all_steps:
-            # ... (код создания step_data) ...
-            step_data = {
+             step_data = {
+                # ... (все поля как были) ...
                 "step_id": step.step_id, "step_position": step.step_position, "step_type": step.step_type, "step_cost": step.step_cost,
                 "lesson_id": step.lesson.lesson_id if step.lesson else None, "lesson_position": step.lesson.lesson_position if step.lesson else None,
                 "module_id": step.lesson.module.module_id if step.lesson and step.lesson.module else None, "module_position": step.lesson.module.module_position if step.lesson and step.lesson.module else None,
-                "module_title": step.lesson.module.title if step.lesson and step.lesson.module and hasattr(step.lesson.module, 'title') else None,
-                "course_id": step.lesson.module.course.course_id if step.lesson and step.lesson.module and step.lesson.module.course else None,
-                "course_title": step.lesson.module.course.title if step.lesson and step.lesson.module and step.lesson.module.course else None,
-                "step_title_short": step.additional_info.step_title_short if step.additional_info else None, "step_title_full": step.additional_info.step_title_full if step.additional_info else None,
-                "difficulty": step.additional_info.difficulty if step.additional_info else None, "discrimination": step.additional_info.discrimination if step.additional_info else None,
+                "module_title": None, # Заполним ниже если есть
+                "course_id": None, "course_title": None, # Заполним ниже если есть
+                "step_title_short": None, "step_title_full": None, "difficulty": None, "discrimination": None, # Заполним ниже если есть
                 "users_passed": 0, "all_users_attempted": 0, "step_effectiveness": 0.0, "success_rate": 0.0,
-                "avg_attempts_per_passed_user": None, "comments_count": 0, "avg_completion_time_seconds": None,
+                "avg_attempts_per_passed_user": None, "comments_count": 0, "avg_completion_time_seconds": None, # avg_completion_time сюда НЕ добавляем, т.к. это дорого
             }
-            step_submissions = submissions_data.get(step.step_id)
-            if isinstance(step_submissions, dict):
+             # Заполняем данные из связанных таблиц
+             if step.lesson and step.lesson.module:
+                  step_data["module_title"] = getattr(step.lesson.module, 'title', None) # Пример безопасного доступа
+                  if step.lesson.module.course:
+                       step_data["course_id"] = step.lesson.module.course.course_id
+                       step_data["course_title"] = step.lesson.module.course.title
+             if step.additional_info:
+                 step_data["step_title_short"] = step.additional_info.step_title_short
+                 step_data["step_title_full"] = step.additional_info.step_title_full
+                 step_data["difficulty"] = step.additional_info.difficulty
+                 step_data["discrimination"] = step.additional_info.discrimination
+
+             # Заполняем метрики из агрегатов
+             step_submissions = submissions_data.get(step.step_id)
+             if isinstance(step_submissions, dict):
                 passed = step_submissions.get("passed_correctly_users", 0); attempted = step_submissions.get("total_attempted_users", 0)
                 total_subs = step_submissions.get("total_submissions", 0); correct_subs = step_submissions.get("correct_submissions", 0)
                 step_data["users_passed"] = passed; step_data["all_users_attempted"] = attempted
                 step_data["step_effectiveness"] = (float(passed) / attempted) if attempted > 0 else 0.0
                 step_data["success_rate"] = (float(correct_subs) / total_subs) if total_subs > 0 else 0.0
                 step_data["avg_attempts_per_passed_user"] = (float(total_subs) / passed) if passed > 0 else None
-            elif step_submissions is not None: print(f"!!! ПРЕДУПРЕЖДЕНИЕ: Ожидался dict в submissions_data для step_id {step.step_id}, но получен {type(step_submissions)}")
-            step_data["comments_count"] = comments_data.get(step.step_id, 0)
-            results_list.append(step_data)
-        # ---> КОНЕЦ СУЩЕСТВУЮЩЕГО КОДА РАСЧЕТА <---
+             step_data["comments_count"] = comments_data.get(step.step_id, 0)
+             results_list.append(step_data)
 
-        # 5. СОХРАНЕНИЕ В ОБА КЕША
-        if results_list: # Сохраняем только если есть результаты
-            structure_with_metrics_cache[STRUCTURE_CACHE_KEY] = results_list # Сохраняем в in-memory
-            save_cache_to_file(results_list, STRUCTURE_CACHE_FILE) # Сохраняем в файл
-        else:
-             print("--- /steps/structure: Расчет вернул пустой список. Кеши не обновлены. ---")
-
+        # 5. СОХРАНЕНИЕ В КЕШ (in-memory и файловый)
+        if results_list:
+            structure_with_metrics_cache[cache_key] = results_list
+            save_cache_to_file(results_list, cache_filepath)
+        else: # Если список пуст, сохраняем пустой список в кеш
+             structure_with_metrics_cache[cache_key] = []
+             save_cache_to_file([], cache_filepath)
 
         total_duration = time.time() - start_time
-        print(f"--- Формирование списка шагов С МЕТРИКАМИ завершено (за {total_duration:.2f} сек).")
+        print(f"--- Формирование списка шагов С МЕТРИКАМИ завершено (ключ: {cache_key}, за {total_duration:.2f} сек).")
         json_string = json.dumps(results_list, ensure_ascii=False)
         return Response(json_string, mimetype='application/json; charset=utf-8')
 
     except Exception as e:
-        # Очищаем in-memory кеш при ошибке расчета
-        if STRUCTURE_CACHE_KEY in structure_with_metrics_cache:
-            del structure_with_metrics_cache[STRUCTURE_CACHE_KEY]
-        # Файловый кеш НЕ удаляем здесь, т.к. он мог быть рабочим до ошибки
-
+        # Очищаем in-memory кеш при ошибке расчета для этого ключа
+        if cache_key in structure_with_metrics_cache: del structure_with_metrics_cache[cache_key]
         total_duration = time.time() - start_time
-        print(f"!!! Ошибка при расчете структуры шагов С МЕТРИКАМИ (за {total_duration:.2f} сек): {e}")
-        import traceback
+        print(f"!!! Ошибка при расчете структуры шагов (ключ: {cache_key}, за {total_duration:.2f} сек): {e}")
         traceback.print_exc()
         return jsonify({"error": "Could not retrieve step structure with metrics", "details": str(e)}), 500
+
+
+@metrics_bp.route("/courses", methods=['GET'])
+def get_all_courses():
+    """Возвращает список всех курсов из базы данных."""
+    print("--- Запрос списка всех курсов ---")
+    try:
+        # Запрашиваем все курсы, сортируем по ID для консистентности
+        courses = db.session.query(Course).order_by(Course.course_id).all()
+
+        # Формируем список словарей для JSON
+        courses_list = [
+            {"course_id": course.course_id, "title": course.title}
+            for course in courses
+        ]
+        print(f"--- Найдено курсов: {len(courses_list)} ---")
+        json_string = json.dumps(courses_list, ensure_ascii=False, indent=2)
+        return Response(json_string, mimetype='application/json; charset=utf-8')
+
+    except Exception as e:
+        print(f"!!! Ошибка при получении списка курсов: {e}")
+        traceback.print_exc()
+        return jsonify({"error": "Could not retrieve course list", "details": str(e)}), 500
 
 
 @metrics_bp.route("/step/<int:step_id>/all", methods=['GET'])
