@@ -250,164 +250,265 @@ def get_course_completion_rates(course_id):
 @metrics_bp.route("/steps/structure", methods=['GET'])
 def get_steps_structure():
     """
-    Возвращает список шагов с деталями и метриками.
+    Возвращает список шагов с деталями и НОВЫМИ РАССЧИТАННЫМИ МЕТРИКАМИ.
     Принимает НЕОБЯЗАТЕЛЬНЫЙ параметр ?course_id= для фильтрации.
     Использует кэш (in-memory и файловый), зависящий от course_id.
     """
     global structure_with_metrics_cache
-    course_id_filter = request.args.get('course_id', type=int) # Получаем ID курса из запроса
+    course_id_filter = request.args.get('course_id', type=int)
 
-    # Определяем ключ кеша и имя файла в зависимости от наличия фильтра
+    # Определяем ключ кеша и имя файла
     if course_id_filter is not None:
-        cache_key = f"structure_{course_id_filter}"
-        cache_filename = f"structure_cache_{course_id_filter}.json"
+        cache_key = f"structure_metrics_{course_id_filter}" # Изменил ключ для нового набора метрик
+        cache_filename = f"structure_cache_metrics_{course_id_filter}.json"
         print(f"--- /steps/structure: Запрос для курса ID={course_id_filter} ---")
     else:
-        cache_key = "structure_all"
-        cache_filename = "structure_cache_all.json"
+        cache_key = "structure_metrics_all" # Изменил ключ
+        cache_filename = "structure_cache_metrics_all.json"
         print(f"--- /steps/structure: Запрос для ВСЕХ курсов ---")
 
     cache_filepath = os.path.join(CACHE_DIR, cache_filename)
 
-    # 1. Проверка in-memory кеша
+    # 1. Проверка in-memory кеша (без изменений)
     if cache_key in structure_with_metrics_cache:
+        # ... (код проверки in-memory кеша) ...
         print(f"--- /steps/structure: Возврат данных из IN-MEMORY КЕША (ключ: {cache_key}) ---")
         cached_data = structure_with_metrics_cache[cache_key]
-        # Доп. проверка на случай пустого кеша
         if cached_data is not None and isinstance(cached_data, list):
-            json_string = json.dumps(cached_data, ensure_ascii=False)
-            return Response(json_string, mimetype='application/json; charset=utf-8')
-        else: # Если в кеше не список или None
-             print(f"--- /steps/structure: Невалидные данные в IN-MEMORY КЕШЕ (ключ: {cache_key}). Очистка. ---")
-             del structure_with_metrics_cache[cache_key]
+             json_string = json.dumps(cached_data, ensure_ascii=False); return Response(json_string, mimetype='application/json; charset=utf-8')
+        else: del structure_with_metrics_cache[cache_key]
 
-    # 2. Проверка файлового кеша
+
+    # 2. Проверка файлового кеша (без изменений)
     print(f"--- /steps/structure: Проверка файлового кеша ({cache_filepath})... ---")
     file_cached_data = load_cache_from_file(cache_filepath)
     if file_cached_data is not None and isinstance(file_cached_data, list):
-        structure_with_metrics_cache[cache_key] = file_cached_data # Сохраняем в in-memory
+        structure_with_metrics_cache[cache_key] = file_cached_data
         print(f"--- /steps/structure: Возврат данных из ФАЙЛОВОГО КЕША (ключ: {cache_key}) ---")
-        json_string = json.dumps(file_cached_data, ensure_ascii=False)
-        return Response(json_string, mimetype='application/json; charset=utf-8')
+        json_string = json.dumps(file_cached_data, ensure_ascii=False); return Response(json_string, mimetype='application/json; charset=utf-8')
     elif file_cached_data is not None:
          print(f"--- /steps/structure: Невалидные данные в ФАЙЛОВОМ КЕШЕ ({cache_filepath}). Кеш будет пересчитан. ---")
-         # Файл уже удален функцией load_cache_from_file
+
 
     # 3. Расчет данных (если кеши пусты/невалидны)
-    print(f"--- /steps/structure: Расчет данных (ключ кеша: {cache_key}) ---")
+    print(f"--- /steps/structure: Расчет данных С НОВЫМИ МЕТРИКАМИ (ключ кеша: {cache_key}) ---")
     start_time = time.time()
     try:
-        # 1. Запрос базовой структуры С УЧЕТОМ ФИЛЬТРА course_id
+        # 1. Запрос базовой структуры (как и раньше, с joinedload)
         all_steps_query = db.session.query(Step).options(
             joinedload(Step.lesson).joinedload(Lesson.module).joinedload(Module.course),
-            joinedload(Step.additional_info)
-        ).join(Step.lesson).join(Lesson.module).join(Module.course) # Join обязателен для фильтра и сортировки
+            joinedload(Step.additional_info) # Важно для получения views, passed и т.д.
+        ).join(Step.lesson).join(Lesson.module).join(Module.course)
 
         if course_id_filter is not None:
-            # ---> ПРИМЕНЯЕМ ФИЛЬТР ПО КУРСУ <---
             all_steps_query = all_steps_query.filter(Module.course_id == course_id_filter)
-            print(f"    [1/4] Запрос структуры шагов для курса ID={course_id_filter}...")
+            print(f"    [1/5] Запрос структуры шагов для курса ID={course_id_filter}...")
         else:
-            print(f"    [1/4] Запрос структуры ВСЕХ шагов...")
+            print(f"    [1/5] Запрос структуры ВСЕХ шагов...")
 
-        # Сортировка остается прежней
         all_steps_query = all_steps_query.order_by(Course.course_id, Module.module_position, Lesson.lesson_position, Step.step_position)
         all_steps = all_steps_query.all()
-        step_ids = [step.step_id for step in all_steps] # Получаем ID ТОЛЬКО отфильтрованных шагов
+        step_ids = [step.step_id for step in all_steps]
         print(f"    ... Найдено шагов для обработки: {len(all_steps)}")
 
         if not all_steps:
-             # Если шагов нет (для этого курса или вообще), кешируем пустой список
-             structure_with_metrics_cache[cache_key] = []
-             save_cache_to_file([], cache_filepath)
-             return jsonify([])
+             structure_with_metrics_cache[cache_key] = []; save_cache_to_file([], cache_filepath); return jsonify([])
 
-        # 2. Агрегаты Submissions (запрос выполняется только для нужных step_ids)
-        print("    [2/4] Запрос агрегированных данных из Submissions...")
+        # 2. Агрегаты Submissions (как и раньше)
+        print("    [2/5] Запрос агрегированных данных из Submissions...")
         submissions_agg_start = time.time()
-        # ... (код submissions_agg_query и submissions_data как был, он использует актуальный step_ids) ...
         submissions_agg_query = db.session.query(
             Submission.step_id,
             func.count(Submission.submission_id).label("total_submissions"),
             func.sum(case((Submission.status == 'correct', 1), else_=0)).label("correct_submissions"),
             func.count(distinct(Submission.user_id)).label("total_attempted_users"),
-            func.count(distinct(case((Submission.status == 'correct', Submission.user_id)))).label("passed_correctly_users")
-        ).filter(Submission.step_id.in_(step_ids)).group_by(Submission.step_id) # Фильтр УЖЕ по нужным ID
+            func.count(distinct(case((Submission.status == 'correct', Submission.user_id)))).label("passed_correctly_users") # Уникальные пользователи, прошедшие верно
+        ).filter(Submission.step_id.in_(step_ids)).group_by(Submission.step_id)
         submissions_agg_results = submissions_agg_query.all()
-        submissions_data = { row.step_id: { "total_submissions": row.total_submissions or 0, "correct_submissions": row.correct_submissions or 0, "total_attempted_users": row.total_attempted_users or 0, "passed_correctly_users": row.passed_correctly_users or 0 } for row in submissions_agg_results }
+        # Преобразуем в словарь для быстрого доступа
+        submissions_data = { row.step_id: {
+                "total_submissions": row.total_submissions or 0,
+                "correct_submissions": row.correct_submissions or 0,
+                "total_attempted_users": row.total_attempted_users or 0,
+                "passed_correctly_users": row.passed_correctly_users or 0
+            } for row in submissions_agg_results
+        }
         print(f"    ... Агрегаты Submissions получены (за {(time.time() - submissions_agg_start):.2f} сек)")
 
-
-        # 3. Данные по комментариям (запрос выполняется только для нужных step_ids)
-        print("    [3/4] Запрос данных по комментариям...")
+        # 3. ---> ИЗМЕНЕНО: Данные по комментариям (теперь считаем и уникальных пользователей) <---
+        print("    [3/5] Запрос данных по комментариям (включая уникальных пользователей)...")
         comments_start = time.time()
-        # ... (код comments_query и comments_data как был, он использует актуальный step_ids) ...
-        comments_query = db.session.query(Comment.step_id, func.count(Comment.comment_id).label("comments_count")).filter(Comment.step_id.in_(step_ids)).group_by(Comment.step_id)
+        comments_query = db.session.query(
+            Comment.step_id,
+            func.count(Comment.comment_id).label("comments_count"),
+            func.count(distinct(Comment.user_id)).label("unique_commenting_users") # <-- Добавили подсчет уникальных
+        ).filter(Comment.step_id.in_(step_ids)).group_by(Comment.step_id)
         comments_results = comments_query.all()
-        comments_data = {row.step_id: row.comments_count or 0 for row in comments_results}
+        # Сохраняем оба значения
+        comments_data = { row.step_id: {
+                "total_comments": row.comments_count or 0,
+                "unique_users": row.unique_commenting_users or 0
+            } for row in comments_results
+        }
         print(f"    ... Данные по комментариям получены (за {(time.time() - comments_start):.2f} сек)")
 
-        # 4. Формирование результата (без изменений, работает с all_steps)
-        print("    [4/4] Формирование итогового результата...")
-        # ... (код формирования results_list как был) ...
+        # ---> 4. РАСЧЕТ СРЕДНЕГО ВРЕМЕНИ С ФИЛЬТРОМ (ДЛЯ ВСЕХ ШАГОВ СРАЗУ) <---
+        # Это все еще запрос к БД, но ОДИН на все шаги, а не в цикле
+        print("    [4/5] Запрос среднего времени выполнения с фильтром (< 3ч)...")
+        avg_time_start = time.time()
+        avg_time_filtered_data = {} # Словарь для хранения результата
+        try:
+            # Подзапрос: первая попытка и ПОСЛЕДНЯЯ ВЕРНАЯ попытка для user+step
+            user_step_times_sq = db.session.query(
+                Submission.step_id, # Добавляем step_id для группировки на внешнем уровне
+                Submission.user_id,
+                func.min(Submission.submission_time).label('first_attempt'),
+                func.max(case((Submission.status == 'correct', Submission.submission_time))).label('last_correct') # Используем MAX для последней верной
+            ).filter(
+                Submission.step_id.in_(step_ids) # Только нужные шаги
+            ).group_by(Submission.step_id, Submission.user_id).subquery() # Группируем по шагу и пользователю
+
+            # Основной запрос: считаем среднее время ДЛЯ КАЖДОГО ШАГА, применяя фильтр
+            avg_time_filtered_query = db.session.query(
+                user_step_times_sq.c.step_id, # Получаем step_id
+                func.avg(
+                    func.timestampdiff(text('SECOND'),
+                                       user_step_times_sq.c.first_attempt,
+                                       user_step_times_sq.c.last_correct)
+                ).label('avg_seconds_filtered')
+            ).filter(
+                user_step_times_sq.c.last_correct.isnot(None), # Пользователь решил верно
+                # Применяем фильтр по времени (< 10800 секунд = 3 часа)
+                func.timestampdiff(text('SECOND'),
+                                   user_step_times_sq.c.first_attempt,
+                                   user_step_times_sq.c.last_correct) <= 10800
+            ).group_by(user_step_times_sq.c.step_id) # Группируем по step_id, чтобы получить среднее для каждого шага
+
+            avg_time_filtered_results = avg_time_filtered_query.all()
+            # Сохраняем результаты в словарь
+            avg_time_filtered_data = {
+                row.step_id: round(float(row.avg_seconds_filtered)) if row.avg_seconds_filtered is not None else None
+                for row in avg_time_filtered_results
+            }
+            print(f"    ... Среднее время с фильтром рассчитано (за {(time.time() - avg_time_start):.2f} сек)")
+
+        except Exception as time_err:
+             print(f"!!! Ошибка при расчете среднего времени с фильтром: {time_err}")
+
+        # 5. ---> ИЗМЕНЕНО: Формирование результата с НОВЫМИ метриками <---
+        print("    [5/5] Формирование итогового результата с НОВЫМИ метриками...")
         results_list = []
         for step in all_steps:
-             step_data = {
-                # ... (все поля как были) ...
+            # --- Базовые данные шага ---
+            step_data = {
                 "step_id": step.step_id, "step_position": step.step_position, "step_type": step.step_type, "step_cost": step.step_cost,
-                "lesson_id": step.lesson.lesson_id if step.lesson else None, "lesson_position": step.lesson.lesson_position if step.lesson else None,
-                "module_id": step.lesson.module.module_id if step.lesson and step.lesson.module else None, "module_position": step.lesson.module.module_position if step.lesson and step.lesson.module else None,
-                "module_title": None, # Заполним ниже если есть
-                "course_id": None, "course_title": None, # Заполним ниже если есть
-                "step_title_short": None, "step_title_full": None, "difficulty": None, "discrimination": None, # Заполним ниже если есть
-                "users_passed": 0, "all_users_attempted": 0, "step_effectiveness": 0.0, "success_rate": 0.0,
-                "avg_attempts_per_passed_user": None, "comments_count": 0, "avg_completion_time_seconds": None, # avg_completion_time сюда НЕ добавляем, т.к. это дорого
+                "lesson_id": step.lesson.lesson_id if step.lesson else None,
+                "lesson_position": step.lesson.lesson_position if step.lesson else None,
+                "module_id": step.lesson.module.module_id if step.lesson and step.lesson.module else None,
+                "module_position": step.lesson.module.module_position if step.lesson and step.lesson.module else None,
+                "module_title": getattr(step.lesson.module, 'title', None) if step.lesson and step.lesson.module else None,
+                "course_id": step.lesson.module.course.course_id if step.lesson and step.lesson.module and step.lesson.module.course else None,
+                "course_title": step.lesson.module.course.title if step.lesson and step.lesson.module and step.lesson.module.course else None,
+                # Данные из AdditionalInfo (будут заполнены ниже)
+                "step_title_short": None, "step_title_full": None,
+                "views": None, "unique_views": None, "passed": None, # Новые поля из Excel
+                # ---> Новые/Обновленные Метрики <---
+                "difficulty_index": None,         # Метрика 1 (сложность = R/T сабмитов)
+                "success_rate": None,             # Метрика 2 (успешность = R/T уников)
+                "avg_attempts_per_passed": None, # Метрика 6 (среднее число попыток)
+                "comment_count": 0,               # Общее число комментов
+                "comment_rate": None,             # Метрика 7 (коэф. комментариев)
+                "usefulness_index": None,         # Метрика 8 (полезность = views/unique_views)
+                "avg_completion_time_filtered_seconds": None
+                # Метрики, которые здесь НЕ считаем из-за сложности:
+                # skip_rate, completion_index, avg_completion_time_seconds
             }
-             # Заполняем данные из связанных таблиц
-             if step.lesson and step.lesson.module:
-                  step_data["module_title"] = getattr(step.lesson.module, 'title', None) # Пример безопасного доступа
-                  if step.lesson.module.course:
-                       step_data["course_id"] = step.lesson.module.course.course_id
-                       step_data["course_title"] = step.lesson.module.course.title
-             if step.additional_info:
-                 step_data["step_title_short"] = step.additional_info.step_title_short
-                 step_data["step_title_full"] = step.additional_info.step_title_full
-                 step_data["difficulty"] = step.additional_info.difficulty
-                 step_data["discrimination"] = step.additional_info.discrimination
 
-             # Заполняем метрики из агрегатов
-             step_submissions = submissions_data.get(step.step_id)
-             if isinstance(step_submissions, dict):
-                passed = step_submissions.get("passed_correctly_users", 0); attempted = step_submissions.get("total_attempted_users", 0)
-                total_subs = step_submissions.get("total_submissions", 0); correct_subs = step_submissions.get("correct_submissions", 0)
-                step_data["users_passed"] = passed; step_data["all_users_attempted"] = attempted
-                step_data["step_effectiveness"] = (float(passed) / attempted) if attempted > 0 else 0.0
-                step_data["success_rate"] = (float(correct_subs) / total_subs) if total_subs > 0 else 0.0
-                step_data["avg_attempts_per_passed_user"] = (float(total_subs) / passed) if passed > 0 else None
-             step_data["comments_count"] = comments_data.get(step.step_id, 0)
-             results_list.append(step_data)
+            # --- Заполнение данных из AdditionalStepInfo ---
+            add_info = step.additional_info
+            if add_info:
+                step_data["step_title_short"] = add_info.step_title_short
+                step_data["step_title_full"] = add_info.step_title_full
+                step_data["views"] = add_info.views
+                step_data["unique_views"] = add_info.unique_views
+                step_data["passed"] = add_info.passed # Используем 'passed' из Excel/БД
+
+            # --- Получение агрегированных данных для текущего шага ---
+            step_submissions = submissions_data.get(step.step_id)
+            step_comments = comments_data.get(step.step_id)
+
+            # --- Расчет метрик (с проверками на None и деление на 0) ---
+            if step_submissions:
+                total_subs = step_submissions.get("total_submissions", 0)
+                correct_subs = step_submissions.get("correct_submissions", 0)
+                attempted_users = step_submissions.get("total_attempted_users", 0)
+                passed_users = step_submissions.get("passed_correctly_users", 0) # Уники, прошедшие верно
+                passed_val = step_data["passed"]
+                unique_views_val = step_data["unique_views"]
+
+                # Метрика 1: Сложность шага (доля верных сабмитов)
+                step_data["difficulty_index"] = (float(correct_subs) / total_subs) if total_subs > 0 else 0.0
+
+                # Метрика 2: Успешность шага (доля верно решивших уников)
+                if passed_val is not None and unique_views_val is not None and unique_views_val > 0:
+                    step_data["success_rate"] = float(passed_val) / unique_views_val
+                else:
+                    step_data["success_rate"] = 0.
+
+                # Метрика 6: Среднее число попыток на одного прошедшего
+                step_data["avg_attempts_per_passed"] = (float(total_subs) / passed_users) if passed_users > 0 else None
+
+                # Заполняем базовые счетчики для информации
+                # step_data["passed"] = passed_users # Перезаписываем значение из Excel значением из submissions? Решите, что важнее. Пока оставляю значение из Excel.
+                # step_data["unique_views"] = attempted_users # Аналогично. Оставляем из Excel.
+
+            if step_comments:
+                total_com = step_comments.get("total_comments", 0)
+                unique_com_users = step_comments.get("unique_users", 0)
+                attempted_users = step_submissions.get("total_attempted_users", 0) if step_submissions else 0 # Нужны пытавшиеся
+                step_data["comment_count"] = total_com
+                unique_views_val = step_data["unique_views"]
+
+                # Метрика 7: Коэффициент комментариев
+                if unique_com_users is not None and unique_views_val is not None and unique_views_val > 0:
+                    step_data["comment_rate"] = float(unique_com_users) / unique_views_val
+                else:
+                    step_data["comment_rate"] = 0.0 # Или None
+            else:
+                step_data["comment_rate"] = 0.0
+
+            # Метрика 8: Полезность (используем данные из add_info, уже загруженные)
+            views = step_data["views"]
+            unique_views_val = step_data["unique_views"]
+            if views is not None and unique_views_val is not None and unique_views_val > 0:
+                step_data["usefulness_index"] = float(views) / unique_views_val
+            else:
+                 step_data["usefulness_index"] = None # Или 0.0, если просмотров нет
+
+            step_data["avg_completion_time_filtered_seconds"] = avg_time_filtered_data.get(step.step_id, None)
+
+            results_list.append(step_data)
 
         # 5. СОХРАНЕНИЕ В КЕШ (in-memory и файловый)
         if results_list:
             structure_with_metrics_cache[cache_key] = results_list
             save_cache_to_file(results_list, cache_filepath)
-        else: # Если список пуст, сохраняем пустой список в кеш
+        else:
              structure_with_metrics_cache[cache_key] = []
              save_cache_to_file([], cache_filepath)
 
         total_duration = time.time() - start_time
-        print(f"--- Формирование списка шагов С МЕТРИКАМИ завершено (ключ: {cache_key}, за {total_duration:.2f} сек).")
+        print(f"--- Формирование списка шагов С НОВЫМИ МЕТРИКАМИ завершено (ключ: {cache_key}, за {total_duration:.2f} сек).")
         json_string = json.dumps(results_list, ensure_ascii=False)
         return Response(json_string, mimetype='application/json; charset=utf-8')
 
     except Exception as e:
-        # Очищаем in-memory кеш при ошибке расчета для этого ключа
         if cache_key in structure_with_metrics_cache: del structure_with_metrics_cache[cache_key]
         total_duration = time.time() - start_time
-        print(f"!!! Ошибка при расчете структуры шагов (ключ: {cache_key}, за {total_duration:.2f} сек): {e}")
+        print(f"!!! Ошибка при расчете структуры шагов с НОВЫМИ метриками (ключ: {cache_key}, за {total_duration:.2f} сек): {e}")
         traceback.print_exc()
         return jsonify({"error": "Could not retrieve step structure with metrics", "details": str(e)}), 500
-
+    
 
 @metrics_bp.route("/courses", methods=['GET'])
 def get_all_courses():
@@ -430,250 +531,3 @@ def get_all_courses():
         print(f"!!! Ошибка при получении списка курсов: {e}")
         traceback.print_exc()
         return jsonify({"error": "Could not retrieve course list", "details": str(e)}), 500
-
-
-@metrics_bp.route("/step/<int:step_id>/all", methods=['GET'])
-def get_all_step_metrics(step_id):
-    """Возвращает ВСЕ рассчитанные метрики для указанного шага."""
-    print(f"--- Запрос всех метрик для шага ID={step_id} ---")
-    metrics = {"step_id": step_id} # Инициализируем словарь результатов
-
-    try:
-        # 0. Проверяем, существует ли сам шаг и получаем доп. инфо
-        # Используем joinedload для одновременной загрузки AdditionalStepInfo
-        step_with_info = db.session.query(Step).options(
-            joinedload(Step.additional_info)
-        ).get(step_id) # .get() эффективен для поиска по PK
-
-        if not step_with_info:
-            abort(404, description=f"Шаг с ID={step_id} не найден.") # Используем abort для 404
-
-        # Добавляем данные из Step (опционально, но может быть полезно)
-        metrics['step_type'] = step_with_info.step_type
-        metrics['step_position'] = step_with_info.step_position
-        metrics['lesson_id'] = step_with_info.lesson_id
-
-        # Добавляем данные из AdditionalStepInfo
-        if step_with_info.additional_info:
-            add_info = step_with_info.additional_info
-            metrics['step_title_short'] = add_info.step_title_short
-            metrics['step_title_full'] = add_info.step_title_full
-            metrics['difficulty'] = add_info.difficulty
-            metrics['discrimination'] = add_info.discrimination
-        else:
-            metrics['step_title_short'] = None
-            metrics['step_title_full'] = None
-            metrics['difficulty'] = None
-            metrics['discrimination'] = None
-        print("    ... доп. информация загружена.")
-
-        # 1. Количество прошедших и общее число пытавшихся
-        users_q = db.session.query(
-            func.count(distinct(Submission.user_id)).label("total_attempted"),
-            func.count(distinct(case((Submission.status == 'correct', Submission.user_id)))).label("passed_correctly")
-        ).filter(Submission.step_id == step_id).first() # first() т.к. ожидаем одну строку
-
-        metrics['users_passed'] = users_q.passed_correctly if users_q else 0
-        metrics['all_users_attempted'] = users_q.total_attempted if users_q else 0
-        print(f"    ... users_passed: {metrics['users_passed']}, all_users_attempted: {metrics['all_users_attempted']}")
-
-        # 2. Результативность (Эффективность)
-        # Используем уже полученные значения
-        if metrics['all_users_attempted'] > 0:
-            metrics['step_effectiveness'] = float(metrics['users_passed']) / metrics['all_users_attempted']
-        else:
-            metrics['step_effectiveness'] = 0.0
-        print(f"    ... step_effectiveness: {metrics['step_effectiveness']:.4f}")
-
-        # 3. Среднее время прохождения (сек)
-        print("    ... расчет среднего времени (через подзапрос)...")
-        try:
-            # Подзапрос для времени первой и первой верной попытки пользователя
-            user_step_times_subquery = db.session.query(
-                Submission.user_id,
-                func.min(Submission.submission_time).label('first_attempt_time'),
-                func.min(case((Submission.status == 'correct', Submission.submission_time))).label('first_correct_time')
-            ).filter(Submission.step_id == step_id)\
-             .group_by(Submission.user_id)\
-             .subquery() # Создаем подзапрос
-
-        # Основной запрос для расчета среднего времени по результатам подзапроса
-            avg_time_result = db.session.query(
-                func.avg(
-                     func.timestampdiff(text('SECOND'),
-                                        user_step_times_subquery.c.first_attempt_time,
-                                        user_step_times_subquery.c.first_correct_time)
-                ).label('avg_seconds')
-            ).filter(user_step_times_subquery.c.first_correct_time.isnot(None)).first() # Условие на подзапрос
-
-        # Округляем до целых секунд
-            avg_seconds_calculated = round(avg_time_result.avg_seconds) if avg_time_result and avg_time_result.avg_seconds is not None else None
-            metrics['avg_completion_time_seconds'] = avg_seconds_calculated
-            print(f"    ... avg_completion_time_seconds: {metrics['avg_completion_time_seconds']}")
-
-        except Exception as time_err:
-        # Локальная обработка ошибки расчета времени, чтобы не прерывать всё
-            print(f"!!! Ошибка при расчете среднего времени для шага {step_id}: {time_err}")
-            metrics['avg_completion_time_seconds'] = None # Устанавливаем в None при ошибке
-
-        # 4. Успешность попыток и Среднее число попыток на прошедшего
-        attempts_q = db.session.query(
-            func.count(Submission.submission_id).label("total_submissions"),
-            func.sum(case((Submission.status == 'correct', 1), else_=0)).label("correct_submissions")
-        ).filter(Submission.step_id == step_id).first()
-
-        total_submissions = attempts_q.total_submissions if attempts_q else 0
-        correct_submissions = attempts_q.correct_submissions if attempts_q else 0
-        users_passed_count = metrics['users_passed'] # Берем уже посчитанное значение
-
-        if total_submissions > 0:
-            metrics['success_rate'] = float(correct_submissions) / total_submissions
-        else:
-            metrics['success_rate'] = 0.0
-
-        if users_passed_count > 0:
-             metrics['avg_attempts_per_passed_user'] = float(total_submissions) / users_passed_count
-        else:
-             metrics['avg_attempts_per_passed_user'] = None # Неопределено, если никто не прошел
-
-        print(f"    ... success_rate: {metrics['success_rate']:.4f}, avg_attempts_per_passed_user: {metrics['avg_attempts_per_passed_user']}")
-
-        # 5. Количество комментариев
-        comments_count = db.session.query(func.count(Comment.comment_id))\
-            .filter(Comment.step_id == step_id)\
-            .scalar()
-        metrics['comments_count'] = comments_count or 0
-        print(f"    ... comments_count: {metrics['comments_count']}")
-
-        print(f"--- Расчет метрик для шага {step_id} завершен успешно.")
-        return jsonify(metrics)
-
-    except Exception as e:
-        print(f"!!! Ошибка при расчете всех метрик для шага {step_id}: {e}")
-        # Возвращаем 500 Internal Server Error
-        return jsonify({"error": f"Could not calculate all metrics for step {step_id}", "details": str(e)}), 500
-
-
-@metrics_bp.route("/step/<int:step_id>/all_opti", methods=['GET'])
-def get_all_step_metrics_opti(step_id):
-    """Возвращает ВСЕ рассчитанные метрики для указанного шага (ОПТИМИЗИРОВАННАЯ ВЕРСИЯ)."""
-    start_time = time.time() # Замеряем время начала
-    print(f"--- [ОПТИМ] Запрос всех метрик для шага ID={step_id} ---")
-    metrics = {"step_id": step_id} # Инициализируем словарь результатов
-
-    try:
-        # ---------------------------------------------------------------
-        # Запрос 1: Получаем основную информацию о шаге и доп. данные
-        # ---------------------------------------------------------------
-        step_info_start = time.time()
-        step_with_info = db.session.query(Step).options(
-            joinedload(Step.additional_info) # Загружаем доп. инфо сразу
-        ).get(step_id) # Быстрый поиск по PK
-
-        if not step_with_info:
-            abort(404, description=f"Шаг с ID={step_id} не найден.")
-
-        # Заполняем базовую информацию
-        metrics['step_type'] = step_with_info.step_type
-        metrics['step_position'] = step_with_info.step_position
-        metrics['lesson_id'] = step_with_info.lesson_id
-
-        # Заполняем доп. информацию
-        if step_with_info.additional_info:
-            add_info = step_with_info.additional_info
-            metrics['step_title_short'] = add_info.step_title_short
-            metrics['step_title_full'] = add_info.step_title_full
-            metrics['difficulty'] = add_info.difficulty
-            metrics['discrimination'] = add_info.discrimination
-        else:
-            metrics['step_title_short'] = None; metrics['step_title_full'] = None
-            metrics['difficulty'] = None; metrics['discrimination'] = None
-        print(f"    [{(time.time() - step_info_start):.4f}s] Шаг и доп. инфо загружены.")
-
-        # ---------------------------------------------------------------
-        # Запрос 2: Основной агрегирующий запрос по таблице submissions
-        # Считаем: общее число попыток, число верных попыток,
-        #          число уникальных пользователей, число уникальных прошедших
-        # ---------------------------------------------------------------
-        submissions_agg_start = time.time()
-        submissions_agg = db.session.query(
-            func.count(Submission.submission_id).label("total_submissions"),
-            func.sum(case((Submission.status == 'correct', 1), else_=0)).label("correct_submissions"),
-            func.count(distinct(Submission.user_id)).label("total_attempted_users"),
-            func.count(distinct(case((Submission.status == 'correct', Submission.user_id)))).label("passed_correctly_users")
-        ).filter(Submission.step_id == step_id).first() # Ожидаем одну строку агрегатов
-        print(f"    [{(time.time() - submissions_agg_start):.4f}s] Агрегаты по submissions рассчитаны.")
-
-        # Извлекаем результаты или ставим 0/None по умолчанию
-        total_submissions = submissions_agg.total_submissions if submissions_agg else 0
-        correct_submissions = submissions_agg.correct_submissions if submissions_agg else 0
-        total_attempted_users = submissions_agg.total_attempted_users if submissions_agg else 0
-        passed_correctly_users = submissions_agg.passed_correctly_users if submissions_agg else 0
-
-        # Расчет метрик на основе агрегатов
-        metrics['users_passed'] = passed_correctly_users
-        metrics['all_users_attempted'] = total_attempted_users
-        metrics['step_effectiveness'] = (float(passed_correctly_users) / total_attempted_users) if total_attempted_users > 0 else 0.0
-        metrics['success_rate'] = (float(correct_submissions) / total_submissions) if total_submissions > 0 else 0.0
-        metrics['avg_attempts_per_passed_user'] = (float(total_submissions) / passed_correctly_users) if passed_correctly_users > 0 else None
-
-        print(f"    ... users_passed: {metrics['users_passed']}, all_users_attempted: {metrics['all_users_attempted']}")
-        print(f"    ... step_effectiveness: {metrics['step_effectiveness']:.4f}")
-        print(f"    ... success_rate: {metrics['success_rate']:.4f}")
-        print(f"    ... avg_attempts_per_passed_user: {metrics['avg_attempts_per_passed_user']}")
-
-        # ---------------------------------------------------------------
-        # Запрос 3: Расчет среднего времени (оставляем с подзапросом, т.к. сложнее объединить)
-        # ---------------------------------------------------------------
-        avg_time_start = time.time()
-        metrics['avg_completion_time_seconds'] = None # Default
-        try:
-            # Подзапрос
-            user_step_times_subquery = db.session.query(
-                Submission.user_id,
-                func.min(Submission.submission_time).label('first_attempt_time'),
-                func.min(case((Submission.status == 'correct', Submission.submission_time))).label('first_correct_time')
-            ).filter(Submission.step_id == step_id)\
-             .group_by(Submission.user_id)\
-             .subquery()
-
-            # Основной запрос
-            avg_time_result = db.session.query(
-                func.avg(
-                     func.timestampdiff(text('SECOND'),
-                                        user_step_times_subquery.c.first_attempt_time,
-                                        user_step_times_subquery.c.first_correct_time)
-                ).label('avg_seconds')
-            # Фильтр по подзапросу - только те, кто решил верно
-            ).filter(user_step_times_subquery.c.first_correct_time.isnot(None)).first()
-
-            if avg_time_result and avg_time_result.avg_seconds is not None:
-                 metrics['avg_completion_time_seconds'] = round(avg_time_result.avg_seconds)
-
-            print(f"    [{(time.time() - avg_time_start):.4f}s] Среднее время рассчитано: {metrics['avg_completion_time_seconds']}")
-
-        except Exception as time_err:
-            print(f"!!! Ошибка при расчете среднего времени для шага {step_id}: {time_err}")
-            # Оставляем None, но не прерываем весь запрос
-
-        # ---------------------------------------------------------------
-        # Запрос 4: Количество комментариев (отдельный запрос к другой таблице)
-        # ---------------------------------------------------------------
-        comments_start = time.time()
-        comments_count = db.session.query(func.count(Comment.comment_id))\
-            .filter(Comment.step_id == step_id)\
-            .scalar()
-        metrics['comments_count'] = comments_count or 0
-        print(f"    [{(time.time() - comments_start):.4f}s] Комментарии подсчитаны: {metrics['comments_count']}")
-
-        total_duration = time.time() - start_time
-        print(f"--- [ОПТИМ] Расчет метрик для шага {step_id} завершен за {total_duration:.4f} сек.")
-        return jsonify(metrics)
-
-    except Exception as e:
-        total_duration = time.time() - start_time
-        print(f"!!! Ошибка при расчете всех метрик для шага {step_id} (за {total_duration:.4f} сек): {e}")
-        # Трассировка ошибки для отладки
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"Could not calculate all metrics for step {step_id}", "details": str(e)}), 500

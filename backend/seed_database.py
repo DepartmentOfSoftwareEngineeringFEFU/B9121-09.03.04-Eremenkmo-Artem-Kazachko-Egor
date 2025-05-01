@@ -432,27 +432,33 @@ def import_submissions(course_data_path, limit=30000000):
 
 
 def import_additional_info(course_data_path, excel_filename='AdditionalInfo.xlsx'):
-    """Импортирует доп. данные для шагов из Excel, читая по ИНДЕКСАМ колонок."""
+    """
+    Импортирует доп. данные для шагов из Excel (ФОРМАТ с 26.07).
+    СНАЧАЛА УДАЛЯЕТ ВСЕ СТАРЫЕ ЗАПИСИ из таблицы additional_step_info.
+    Читает по ИНДЕКСАМ колонок (E=4, I=8, J=9, K=10, L=11, M=12).
+    """
     additional_info_path = os.path.join(course_data_path, excel_filename)
-    print(f"--- Начало импорта доп. информации из {additional_info_path} (ПО ИНДЕКСАМ)...")
-    try:
-        # Читаем Excel, ИГНОРИРУЯ заголовок (header=None).
-        # Pandas назначит числовые индексы (0, 1, 2...) колонкам.
-        # skiprows=1 пропустит первую строку (где могут быть заголовки)
-        df = pd.read_excel(additional_info_path, header=None, skiprows=1)
+    print(f"--- Начало импорта доп. информации из {additional_info_path} (ФОРМАТ с 26.07)...")
 
-        # --- ОПРЕДЕЛЯЕМ ИНДЕКСЫ КОЛОНОК (0-based) ---
-        # На основе вашего скриншота:
-        # F -> 5, I -> 8, J -> 9, K -> 10, L -> 11
-        STEP_ID_IDX = 5
-        TITLE_SHORT_IDX = 8
-        TITLE_FULL_IDX = 9
-        DIFFICULTY_IDX = 10
-        DISCRIMINATION_IDX = 11
+    try:
+
+
+        # Читаем Excel, пропуская 8 строк заголовков (данные с 9-й строки)
+        df = pd.read_excel(additional_info_path, header=None, skiprows=8)
+
+        # --- ОПРЕДЕЛЯЕМ ИНДЕКСЫ КОЛОНОК (0-based в pandas) ---
+        # E=4, I=8, J=9, K=10, L=11, M=12
+        STEP_ID_IDX = 5           # Колонка E
+        TITLE_SHORT_IDX = 8       # Колонка I  <-- ИЗМЕНЕНО
+        TITLE_FULL_IDX = 9        # Колонка J  <-- ИЗМЕНЕНО
+        VIEWS_IDX = 13            # Колонка K  <-- ИЗМЕНЕНО
+        UNIQUE_VIEWS_IDX = 14     # Колонка L  <-- ИЗМЕНЕНО
+        PASSED_IDX = 15           # Колонка M  <-- ИЗМЕНЕНО
+        # PASSED_CORRECTLY_IDX больше не нужен
         # -----------------------------------------
 
-        # Проверяем, достаточно ли колонок в файле
-        max_required_index = max(STEP_ID_IDX, TITLE_SHORT_IDX, TITLE_FULL_IDX, DIFFICULTY_IDX, DISCRIMINATION_IDX)
+        # Проверяем, достаточно ли колонок
+        max_required_index = max(STEP_ID_IDX, TITLE_SHORT_IDX, TITLE_FULL_IDX, VIEWS_IDX, UNIQUE_VIEWS_IDX, PASSED_IDX)
         if df.shape[1] <= max_required_index:
             print(f"ОШИБКА: В файле {additional_info_path} недостаточно колонок ({df.shape[1]}) для чтения по максимальному требуемому индексу ({max_required_index}).")
             return
@@ -461,60 +467,68 @@ def import_additional_info(course_data_path, excel_filename='AdditionalInfo.xlsx
         skipped_steps_no_match = 0
         skipped_rows_error = 0
 
+        print("--- Обработка строк из Excel...")
         # Итерируем по строкам DataFrame
         for index, row in df.iterrows():
+            excel_row_num = index + 9
             try:
-                # Получаем step_id по индексу
+                # Получаем step_id (колонка E, индекс 4)
                 step_id_raw = row[STEP_ID_IDX]
-                # Попытка преобразовать в int, обработка ошибок и пустых значений
                 if pd.isna(step_id_raw):
-                    # print(f"--- Пропуск строки {index + 2}: Пустой step_id (индекс {STEP_ID_IDX}).") # +2 т.к. index 0-based и пропустили заголовок
-                    skipped_rows_error += 1
-                    continue
+                    skipped_rows_error += 1; continue
                 step_id = int(step_id_raw)
 
-            except (ValueError, TypeError):
-                print(f"--- ОШИБКА: Не удалось получить step_id (индекс {STEP_ID_IDX}) в строке {index + 2}. Значение: '{step_id_raw}'. Строка пропущена.")
-                skipped_rows_error += 1
-                continue
+            except (ValueError, TypeError, IndexError):
+                print(f"--- ОШИБКА: Не удалось получить step_id (индекс {STEP_ID_IDX}) в строке {excel_row_num}. Значение: '{row.get(STEP_ID_IDX, 'N/A')}'. Строка пропущена.")
+                skipped_rows_error += 1; continue
 
-            # Проверяем, существует ли шаг в основной таблице Step
+            # Проверяем, существует ли шаг
             step_exists = db.session.get(Step, step_id)
             if not step_exists:
-                skipped_steps_no_match += 1
-                continue
+                skipped_steps_no_match += 1; continue
 
-            # --- Получаем остальные данные по ИНДЕКСАМ ---
-            title_short_raw = row[TITLE_SHORT_IDX]
-            title_full_raw = row[TITLE_FULL_IDX]
-            difficulty_raw = row[DIFFICULTY_IDX]
-            discrimination_raw = row[DISCRIMINATION_IDX]
-            # ---------------------------------------------
-
-            # Обрабатываем NaN и типы данных
-            # Добавляем проверку math.isnan для float перед конвертацией
-            difficulty = None if pd.isna(difficulty_raw) or (isinstance(difficulty_raw, float) and math.isnan(difficulty_raw)) else float(difficulty_raw)
-            discrimination = None if pd.isna(discrimination_raw) or (isinstance(discrimination_raw, float) and math.isnan(discrimination_raw)) else float(discrimination_raw)
-            title_short = None if pd.isna(title_short_raw) else str(title_short_raw)
-            title_full = None if pd.isna(title_full_raw) else str(title_full_raw)
-
-            # Создаем объект AdditionalStepInfo
-            new_entry = AdditionalStepInfo(
-                step_id=step_id,
-                step_title_short=title_short,
-                step_title_full=title_full,
-                difficulty=difficulty,
-                discrimination=discrimination
-            )
             try:
+                # --- Получаем остальные данные по ИНДЕКСАМ ---
+                title_short_raw = row[TITLE_SHORT_IDX]
+                title_full_raw = row[TITLE_FULL_IDX]
+                views_raw = row[VIEWS_IDX]
+                unique_views_raw = row[UNIQUE_VIEWS_IDX]
+                passed_raw = row[PASSED_IDX]
+                # passed_correctly_raw больше не нужен
+                # ---------------------------------------------
+
+                # Функции конвертации (без изменений)
+                def safe_int(val):
+                    if pd.isna(val) or (isinstance(val, float) and math.isnan(val)) or str(val).strip() == '': return None
+                    try: return int(float(val))
+                    except (ValueError, TypeError): return None
+                def safe_str(val):
+                    if pd.isna(val): return None
+                    return str(val)
+
+                # Создаем объект AdditionalStepInfo с НОВЫМИ полями
+                new_entry = AdditionalStepInfo(
+                    step_id=step_id,
+                    step_title_short=safe_str(title_short_raw),   # Колонка I
+                    step_title_full=safe_str(title_full_raw),    # Колонка J
+                    views=safe_int(views_raw),                   # Колонка K
+                    unique_views=safe_int(unique_views_raw),     # Колонка L
+                    passed=safe_int(passed_raw)                  # Колонка M
+                    # passed_correctly больше не нужен
+                )
                 db.session.merge(new_entry)
                 count += 1
-            except Exception as e:
-                db.session.rollback()
-                print(f"--- Ошибка при merge доп. инфо для step_id {step_id}: {e}")
-                skipped_rows_error += 1
 
-        # Финальный коммит
+            except (IndexError, ValueError, TypeError) as data_err:
+                 print(f"--- ОШИБКА данных в строке {excel_row_num} для step_id {step_id}: {data_err}. Строка пропущена.")
+                 skipped_rows_error += 1
+                 db.session.rollback()
+            except Exception as merge_err:
+                 db.session.rollback()
+                 print(f"--- Ошибка при merge доп. инфо для step_id {step_id} (строка {excel_row_num}): {merge_err}")
+                 skipped_rows_error += 1
+
+        # Финальный коммит ПОСЛЕ цикла
         print("----------Коммит доп. инфо...")
         try:
             db.session.commit()
@@ -522,15 +536,12 @@ def import_additional_info(course_data_path, excel_filename='AdditionalInfo.xlsx
              print(f"!!! КРИТИЧЕСКАЯ ОШИБКА при финальном коммите доп. инфо: {e}")
              db.session.rollback()
 
-        # Итоговый отчет
+        # Итоговый отчет (без изменений)
         print(f"---------- Импортировано/обновлено доп. инфо: {count} записей.")
-        if skipped_steps_no_match > 0:
-            print(f"---------- Пропущено (нет шага в БД): {skipped_steps_no_match} записей.")
-        if skipped_rows_error > 0:
-            print(f"---------- Пропущено строк из-за ошибок чтения/формата: {skipped_rows_error}.")
+        if skipped_steps_no_match > 0: print(f"---------- Пропущено (нет шага в БД): {skipped_steps_no_match} записей.")
+        if skipped_rows_error > 0: print(f"---------- Пропущено строк из-за ошибок чтения/формата: {skipped_rows_error}.")
 
-    except FileNotFoundError:
-        print(f"!!! ОШИБКА: Файл {additional_info_path} не найден.")
+    except FileNotFoundError: print(f"!!! ОШИБКА: Файл {additional_info_path} не найден.")
     except Exception as e:
         print(f"!!! НЕПРЕДВИДЕННАЯ ОШИБКА при чтении/обработке файла {additional_info_path}: {e}")
         db.session.rollback()
@@ -568,19 +579,19 @@ if __name__ == '__main__':
         print("\n----------Начало импорта данных...")
         
         # Вызов функций импорта в правильном порядке зависимостей
-        current_learner_ids = import_learners(course_data_path=COURSE_DATA_PATH)
-        imported_course_id = import_structure(course_data_path=COURSE_DATA_PATH)
+        #current_learner_ids = import_learners(course_data_path=COURSE_DATA_PATH)
+        #imported_course_id = import_structure(course_data_path=COURSE_DATA_PATH)
 
-        if imported_course_id is not None:
-            enroll_learners_to_course(
-                target_course_id=imported_course_id,
-                learner_ids_to_enroll=current_learner_ids # Передаем ID
-            )
-        else: print("!!! Импорт структуры не вернул ID курса. Зачисление пропущено.")
+        #if imported_course_id is not None:
+        #    enroll_learners_to_course(
+        #        target_course_id=imported_course_id,
+        #        learner_ids_to_enroll=current_learner_ids # Передаем ID
+        #    )
+        #else: print("!!! Импорт структуры не вернул ID курса. Зачисление пропущено.")
 
-        #import_additional_info(course_data_path=COURSE_DATA_PATH) # Используем имя файла по умолчанию
-        import_comments(course_data_path=COURSE_DATA_PATH)
-        import_submissions(course_data_path=COURSE_DATA_PATH)
+        import_additional_info(course_data_path=COURSE_DATA_PATH) # Используем имя файла по умолчанию
+        #import_comments(course_data_path=COURSE_DATA_PATH)
+        #import_submissions(course_data_path=COURSE_DATA_PATH)
 
         print("\n----------ИМПОРТ ДАННЫХ ЗАВЕРШЕН.")
         print("="*40)

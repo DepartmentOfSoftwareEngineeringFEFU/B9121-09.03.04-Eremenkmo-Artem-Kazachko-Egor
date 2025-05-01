@@ -50,15 +50,16 @@ class MyModelView(ModelView):
 class AdditionalStepInfoAdminView(MyModelView): # Наследуемся от базового
     # Явно перечисляем ВСЕ колонки, которые хотим видеть в списке,
     # включая step_id в нужном порядке.
-    column_list = ('step_id', 'step_title_short', 'step_title_full', 'difficulty', 'discrimination')
+    column_list = ('step_id', 'step_title_short', 'step_title_full', 'views', 'unique_views', 'passed')
     column_labels = { # (Опционально) Красивые названия колонок
         'step_id': 'Step ID',
         'step_title_short': 'Краткое название',
         'step_title_full': 'Полное название',
-        'difficulty': 'Сложность',
-        'discrimination': 'Дискриминативность'
+        'views': 'Просмотры',
+        'unique_views': 'Уник. просмотры',
+        'passed': 'Прохождения'
     }
-    column_sortable_list = ('step_id', 'step_title_short', 'difficulty', 'discrimination') # Колонки для сортировки
+    column_sortable_list = ('step_id', 'step_title_short', 'views', 'unique_views', 'passed') # Колонки для сортировки
     column_searchable_list = ('step_id', 'step_title_short', 'step_title_full')
 
 admin = Admin(app, name='Course Analytics Admin', template_mode="bootstrap4")

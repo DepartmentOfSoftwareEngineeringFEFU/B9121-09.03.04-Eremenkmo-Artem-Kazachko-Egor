@@ -107,9 +107,10 @@ class AdditionalStepInfo(db.Model):
     # и внешним ключом, ссылающимся на Step.step_id
     step_id = db.Column(db.Integer, ForeignKey('step.step_id'), primary_key=True)
     step_title_short = db.Column(String(255), nullable=True)
-    step_title_full = db.Column(Text, nullable=True) # Используем Text для потенциально длинных названий
-    difficulty = db.Column(Float, nullable=True)     # Float для дробных чисел
-    discrimination = db.Column(Float, nullable=True) # Float для дробных чисел
+    step_title_full = db.Column(Text, nullable=True)
+    views = db.Column(Integer, nullable=True)
+    unique_views = db.Column(Integer, nullable=True)
+    passed = db.Column(Integer, nullable=True)
 
     def __repr__(self):
         return f'<AdditionalStepInfo for Step {self.step_id}>'
