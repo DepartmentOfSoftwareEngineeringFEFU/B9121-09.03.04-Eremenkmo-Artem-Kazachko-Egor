@@ -927,19 +927,20 @@ function Dashboard() {
             />
           </Box>
           {/* Сам график */}
-          <ResponsiveContainer width="100%" height={400}>
+          <ResponsiveContainer width="100%" height={300}>
             <LineChart
               data={chartData}
               margin={{ top: 20, right: 30, left: 20 }}
             >
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis
-                dataKey="step_label"
-                tick={false}
-                angle={-60}
-                textAnchor="end"
-                height={70}
-                interval={0}
+                   dataKey="step_label" // Название поля с метками шагов
+                   // tick={false}      // <--- УБЕРИ ИЛИ ЗАКОММЕНТИРУЙ ЭТУ СТРОКУ, ЕСЛИ ОНА ЕСТЬ
+                   angle={-60}          // Оставляем поворот, если нужен
+                   textAnchor="end"     // Оставляем выравнивание
+                   height={70}          // Оставляем высоту для повернутых меток
+                   interval={9}
+                   tick={{ fontSize: 8 }}
               />
               <YAxis />
               <Tooltip />
@@ -947,7 +948,7 @@ function Dashboard() {
                 verticalAlign="bottom"
                 // Функция для рендеринга текста легенды с увеличенным шрифтом
                 formatter={(value, entry, index) => (
-                  <span style={{ fontSize: "25px", color: entry.color }}>
+                  <span style={{ fontSize: "20px", color: entry.color }}>
                     {" "}
                     {/* Можешь изменить '14px' */}
                     {value}

@@ -1,3 +1,0 @@
-FLASK_APP=backend.database
-FLASK_ENV=development
-RUN_MODE=server
