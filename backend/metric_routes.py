@@ -8,6 +8,7 @@ from .app_state import calculated_metrics_storage, structure_with_metrics_cache
 from sqlalchemy.orm import joinedload, aliased
 import time
 import traceback
+from collections import defaultdict
 
 metrics_bp = Blueprint('metrics', __name__, url_prefix='/api/metrics')
 
@@ -231,19 +232,35 @@ def get_teachers():
          return Response(json_string, mimetype='application/json; charset=utf-8')
 
 
-@metrics_bp.route("/course/<int:course_id>/completion_rates", methods=['GET'])
-def get_course_completion_rates(course_id):
+@metrics_bp.route("/course/completion_rates", methods=['GET']) # Убрали <int:course_id>
+def get_all_courses_completion_rates(): # Переименовал функцию для ясности, убрали аргумент course_id
     """
     Возвращает ПРЕДВАРИТЕЛЬНО РАССЧИТАННУЮ результативность
-    для УКАЗАННОГО курса по диапазонам.
+    для ВСЕХ курсов по диапазонам.
     """
     storage_key = 'course_completion_rates'
-    # Ищем данные для конкретного course_id внутри словаря
-    all_courses_data = calculated_metrics_storage.get(storage_key, {})
-    completion_data = all_courses_data.get(course_id, {"error": f"Completion rate data for course_id={course_id} not pre-calculated or course not found."})
+    print(f"--- Запрос результативности для ВСЕХ курсов из хранилища (ключ: {storage_key}) ---")
 
-    status_code = 404 if isinstance(completion_data, dict) and "error" in completion_data else 200
-    json_string = json.dumps(completion_data, ensure_ascii=False, indent=2)
+    # Получаем ВЕСЬ словарь с данными по курсам из хранилища
+    all_courses_data = calculated_metrics_storage.get(storage_key, {"error": "Completion rate data not pre-calculated."})
+
+    # Проверяем, не является ли весь результат ошибкой
+    is_error = isinstance(all_courses_data, dict) and "error" in all_courses_data
+
+    # Определяем статус ответа
+    # Считаем успехом, даже если это пустой словарь (значит, расчет был, но курсов нет)
+    # Ошибкой считаем только если в корне лежит словарь с ключом "error"
+    status_code = 500 if is_error else 200
+
+    if is_error:
+        print(f"--- Ошибка: Данные о результативности не были рассчитаны или произошла ошибка при расчете.")
+    elif not all_courses_data: # Проверка на пустой словарь {}
+        print(f"--- Предупреждение: Данные о результативности пусты (возможно, нет курсов или расчет еще не прошел).")
+    else:
+         print(f"--- Возвращаются данные о результативности для {len(all_courses_data)} курсов.")
+
+    # Возвращаем весь словарь (или сообщение об ошибке)
+    json_string = json.dumps(all_courses_data, ensure_ascii=False, indent=2)
     return Response(json_string, status=status_code, mimetype='application/json; charset=utf-8')
 
 
@@ -294,49 +311,85 @@ def get_steps_structure():
     print(f"--- /steps/structure: Расчет данных С НОВЫМИ МЕТРИКАМИ (ключ кеша: {cache_key}) ---")
     start_time = time.time()
     try:
-        # 1. Запрос базовой структуры (как и раньше, с joinedload)
+        # --- ШАГ 1: Запрос базовой структуры и ОПРЕДЕЛЕНИЕ ПОРЯДКА ШАГОВ ПО КУРСАМ ---
+        print("    [1/9] Запрос базовой структуры и определение порядка шагов...")
         all_steps_query = db.session.query(Step).options(
             joinedload(Step.lesson).joinedload(Lesson.module).joinedload(Module.course),
-            joinedload(Step.additional_info) # Важно для получения views, passed и т.д.
+            joinedload(Step.additional_info)
         ).join(Step.lesson).join(Lesson.module).join(Module.course)
 
         if course_id_filter is not None:
             all_steps_query = all_steps_query.filter(Module.course_id == course_id_filter)
-            print(f"    [1/5] Запрос структуры шагов для курса ID={course_id_filter}...")
-        else:
-            print(f"    [1/5] Запрос структуры ВСЕХ шагов...")
 
-        all_steps_query = all_steps_query.order_by(Course.course_id, Module.module_position, Lesson.lesson_position, Step.step_position)
+        all_steps_query = all_steps_query.order_by(
+            Course.course_id, Module.module_position, Lesson.lesson_position, Step.step_position
+        )
         all_steps = all_steps_query.all()
-        step_ids = [step.step_id for step in all_steps]
-        print(f"    ... Найдено шагов для обработки: {len(all_steps)}")
+        step_ids = [step.step_id for step in all_steps] # Все ID шагов для текущего запроса
+
+        # Создаем словарь {course_id: [ordered_step_ids]}
+        course_step_order = defaultdict(list)
+        step_positions = {} # Словарь для хранения позиций step_id -> index в его курсе
+        lesson_to_steps = defaultdict(list) # ---> НОВЫЙ СЛОВАРЬ: lesson_id -> [step_ids]
+        steps_in_lessons = set()
+
+        for step in all_steps:
+             course_id = step.lesson.module.course_id if step.lesson and step.lesson.module else None
+             lesson_id = step.lesson_id if step.lesson else None
+             if course_id:
+                 course_step_order[course_id].append(step.step_id)
+                 step_positions[step.step_id] = len(course_step_order[course_id]) - 1 # Сохраняем индекс
+             if lesson_id:
+                lesson_to_steps[lesson_id].append(step.step_id)
+                steps_in_lessons.add(step.step_id)
+
+        print(f"    ... Найдено шагов: {len(all_steps)}. Определен порядок для {len(course_step_order)} курсов.")
 
         if not all_steps:
              structure_with_metrics_cache[cache_key] = []; save_cache_to_file([], cache_filepath); return jsonify([])
+        
+        if not steps_in_lessons:
+            print("    ... ПРЕДУПРЕЖДЕНИЕ: Ни один из найденных шагов не привязан к уроку. Расчет дискриминативности невозможен.")
 
-        # 2. Агрегаты Submissions (как и раньше)
-        print("    [2/5] Запрос агрегированных данных из Submissions...")
+        # --- ШАГ 2: Запрос ВСЕХ релевантных Submissions (user_id, step_id, status, score) ---
+        # Нам нужны баллы (score) для дискриминативности
+        print("    [2/9] Запрос ВСЕХ сабмишенов (с баллами) для релевантных шагов...")
+        submissions_fetch_start = time.time()
+        all_submissions_for_steps = []
+        try:
+            # Запрашиваем нужные поля
+            submissions_query = db.session.query(
+                Submission.user_id, Submission.step_id, Submission.status, Submission.score
+            ).filter(Submission.step_id.in_(step_ids)) # Фильтруем по ID шагов
+            all_submissions_for_steps = submissions_query.all() # Получаем все кортежи
+            print(f"    ... Получено {len(all_submissions_for_steps)} сабмишенов (за {(time.time() - submissions_fetch_start):.2f} сек)")
+        except Exception as sub_err:
+            print(f"!!! Ошибка при запросе сабмишенов: {sub_err}")
+
+        # --- ШАГ 3: Предварительная Агрегация Submissions (по step_id) ---
+        # Считаем базовые счетчики, как и раньше
+        print("    [3/9] Предварительная агрегация данных из Submissions...")
         submissions_agg_start = time.time()
-        submissions_agg_query = db.session.query(
-            Submission.step_id,
-            func.count(Submission.submission_id).label("total_submissions"),
-            func.sum(case((Submission.status == 'correct', 1), else_=0)).label("correct_submissions"),
-            func.count(distinct(Submission.user_id)).label("total_attempted_users"),
-            func.count(distinct(case((Submission.status == 'correct', Submission.user_id)))).label("passed_correctly_users") # Уникальные пользователи, прошедшие верно
-        ).filter(Submission.step_id.in_(step_ids)).group_by(Submission.step_id)
-        submissions_agg_results = submissions_agg_query.all()
-        # Преобразуем в словарь для быстрого доступа
-        submissions_data = { row.step_id: {
-                "total_submissions": row.total_submissions or 0,
-                "correct_submissions": row.correct_submissions or 0,
-                "total_attempted_users": row.total_attempted_users or 0,
-                "passed_correctly_users": row.passed_correctly_users or 0
-            } for row in submissions_agg_results
-        }
-        print(f"    ... Агрегаты Submissions получены (за {(time.time() - submissions_agg_start):.2f} сек)")
+        submissions_data = defaultdict(lambda: {
+            "total_submissions": 0, "correct_submissions": 0,
+            "total_attempted_users": set(), "passed_correctly_users": set()
+        })
+        # Используем данные, полученные на ШАГЕ 2
+        for sub in all_submissions_for_steps:
+            data = submissions_data[sub.step_id]
+            data["total_submissions"] += 1
+            data["total_attempted_users"].add(sub.user_id)
+            if sub.status == 'correct':
+                data["correct_submissions"] += 1
+                data["passed_correctly_users"].add(sub.user_id)
+        # Преобразуем set в count
+        for step_id in submissions_data:
+            submissions_data[step_id]["total_attempted_users"] = len(submissions_data[step_id]["total_attempted_users"])
+            submissions_data[step_id]["passed_correctly_users"] = len(submissions_data[step_id]["passed_correctly_users"])
+        print(f"    ... Агрегаты Submissions посчитаны (за {(time.time() - submissions_agg_start):.2f} сек)")
 
-        # 3. ---> ИЗМЕНЕНО: Данные по комментариям (теперь считаем и уникальных пользователей) <---
-        print("    [3/5] Запрос данных по комментариям (включая уникальных пользователей)...")
+        # 4. ---> ИЗМЕНЕНО: Данные по комментариям (теперь считаем и уникальных пользователей) <---
+        print("    [4/9] Запрос данных по комментариям (включая уникальных пользователей)...")
         comments_start = time.time()
         comments_query = db.session.query(
             Comment.step_id,
@@ -352,9 +405,9 @@ def get_steps_structure():
         }
         print(f"    ... Данные по комментариям получены (за {(time.time() - comments_start):.2f} сек)")
 
-        # ---> 4. РАСЧЕТ СРЕДНЕГО ВРЕМЕНИ С ФИЛЬТРОМ (ДЛЯ ВСЕХ ШАГОВ СРАЗУ) <---
+        # ---> 5. РАСЧЕТ СРЕДНЕГО ВРЕМЕНИ С ФИЛЬТРОМ (ДЛЯ ВСЕХ ШАГОВ СРАЗУ) <---
         # Это все еще запрос к БД, но ОДИН на все шаги, а не в цикле
-        print("    [4/5] Запрос среднего времени выполнения с фильтром (< 3ч)...")
+        print("    [5/9] Запрос среднего времени выполнения с фильтром (< 3ч)...")
         avg_time_start = time.time()
         avg_time_filtered_data = {} # Словарь для хранения результата
         try:
@@ -395,8 +448,95 @@ def get_steps_structure():
         except Exception as time_err:
              print(f"!!! Ошибка при расчете среднего времени с фильтром: {time_err}")
 
-        # 5. ---> ИЗМЕНЕНО: Формирование результата с НОВЫМИ метриками <---
-        print("    [5/5] Формирование итогового результата с НОВЫМИ метриками...")
+        # ---> ШАГ 6: ЗАПРОС ВСЕХ ВЕРНЫХ САБМИШЕНОВ (ДЛЯ РАСЧЕТА T) <---
+        print("    [6/9] Запрос ВСЕХ верных сабмишенов (для расчета коэф. пропуска и дискриминативности)...")
+        correct_subs_start = time.time()
+        correct_submissions_set = set() # Используем set для быстрой проверки (user_id, step_id) in set
+        try:
+            correct_subs_query = db.session.query(Submission.user_id, Submission.step_id)\
+                .filter(Submission.status == 'correct', Submission.step_id.in_(step_ids))\
+                .distinct()
+            correct_submissions_set = {(row.user_id, row.step_id) for row in correct_subs_query.all()}
+            print(f"    ... Получено {len(correct_submissions_set)} уникальных верных пар (user, step) (за {(time.time() - correct_subs_start):.2f} сек)")
+        except Exception as cs_err:
+             print(f"!!! Ошибка при получении верных сабмишенов: {cs_err}")
+
+        # --- ШАГ 7: Запрос ВСЕХ УНИКАЛЬНЫХ попыток (ДЛЯ Completion Index) ---
+        print("    [7/9] Запрос ВСЕХ УНИКАЛЬНЫХ попыток (user, step) (для Индекса завершения)...")
+        all_attempts_start = time.time()
+        all_attempted_pairs_set = set()
+        try:
+            all_attempts_query = db.session.query(Submission.user_id, Submission.step_id)\
+                .filter(Submission.step_id.in_(step_ids))\
+                .distinct()
+            all_attempted_pairs_set = {(row.user_id, row.step_id) for row in all_attempts_query.all()}
+            print(f"    ... Получено {len(all_attempted_pairs_set)} уникальных пар попыток (user, step) (за {(time.time() - all_attempts_start):.2f} сек)")
+        except Exception as aa_err:
+            print(f"!!! Ошибка при получении всех пар попыток: {aa_err}")
+
+        # --- ШАГ 8: Построение множеств пользователей по шагам (attempted И passed) ---
+        print("    [8/9] Запрос множеств пользователей (attempted/passed) по шагам и расчит дискриминативности...")
+        users_data_start = time.time()
+        attempted_users_sets = defaultdict(set)
+        passed_users_sets = defaultdict(set)
+        discrimination_indices = {}
+        # Строим attempted из all_attempted_pairs_set
+        for user_id_res, step_id_res in all_attempted_pairs_set:
+             attempted_users_sets[step_id_res].add(user_id_res)
+        # Строим passed из correct_submissions_set
+        for user_id_res, step_id_res in correct_submissions_set:
+             passed_users_sets[step_id_res].add(user_id_res)
+        print(f"    ... Множества пользователей построены (за {(time.time() - users_data_start):.2f} сек)")
+
+        discrim_calc_start = time.time()
+        # ---> Цикл по УРОКАМ для расчета дискриминативности <---
+        for lesson_id, lesson_step_ids in lesson_to_steps.items():
+            print(f"        Расчет D для урока {lesson_id} (шагов: {len(lesson_step_ids)})...")
+            lesson_submissions = [s for s in all_submissions_for_steps if s.step_id in lesson_step_ids] # Фильтруем сабмишены для урока
+            if not lesson_submissions: print(f"        ... Нет сабмишенов для урока {lesson_id}, D не рассчитывается."); continue
+
+            # 1. Суммируем баллы (score) для каждого студента в этом уроке
+            student_lesson_scores = defaultdict(int)
+            lesson_students = set()
+            for sub in lesson_submissions:
+                # score может быть None, обрабатываем это
+                student_lesson_scores[sub.user_id] += (sub.score or 0)
+                lesson_students.add(sub.user_id)
+
+            total_lesson_students = len(lesson_students)
+            if total_lesson_students < 2: # Нужно хотя бы 2 студента для разделения
+                print(f"        ... Недостаточно студентов ({total_lesson_students}) в уроке {lesson_id} для расчета D."); continue
+
+            # 2. Определяем размер групп (n = 27%)
+            # Используем max(1, ...) чтобы гарантировать хотя бы одного студента в группе
+            # Используем floor, чтобы не выходить за пределы при малом N
+            n_percent = 0.27
+            n_group_size = max(1, math.floor(total_lesson_students * n_percent))
+            print(f"        ... Студентов в уроке: {total_lesson_students}, Размер группы (n): {n_group_size}")
+
+            # 3. Сортируем студентов по баллам
+            sorted_students = sorted(lesson_students, key=lambda uid: student_lesson_scores.get(uid, 0), reverse=True)
+
+            # 4. Выделяем верхнюю и нижнюю группы
+            top_group_ids = set(sorted_students[:n_group_size])
+            bottom_group_ids = set(sorted_students[-n_group_size:])
+            print(f"        ... Верхняя группа ID: {top_group_ids}") # Для отладки
+            print(f"        ... Нижняя группа ID: {bottom_group_ids}") # Для отладки
+
+            # 5. Считаем UG и LG для КАЖДОГО шага урока
+            for step_id in lesson_step_ids:
+                ug_correct = sum(1 for user_id in top_group_ids if (user_id, step_id) in correct_submissions_set)
+                lg_correct = sum(1 for user_id in bottom_group_ids if (user_id, step_id) in correct_submissions_set)
+
+                # 6. Считаем D = (UG - LG) / n
+                discrimination_index = (float(ug_correct - lg_correct) / n_group_size) if n_group_size > 0 else None
+                discrimination_indices[step_id] = discrimination_index
+                print(f"            Шаг {step_id}: UG={ug_correct}, LG={lg_correct}, D={discrimination_index}") # Для отладки
+
+        print(f"    ... Расчет дискриминативности завершен (за {(time.time() - discrim_calc_start):.2f} сек)")
+
+        # 9. ---> ИЗМЕНЕНО: Формирование результата с НОВЫМИ метриками <---
+        print("    [9/9] Формирование итогового результата с НОВЫМИ метриками...")
         results_list = []
         for step in all_steps:
             # --- Базовые данные шага ---
@@ -409,16 +549,26 @@ def get_steps_structure():
                 "module_title": getattr(step.lesson.module, 'title', None) if step.lesson and step.lesson.module else None,
                 "course_id": step.lesson.module.course.course_id if step.lesson and step.lesson.module and step.lesson.module.course else None,
                 "course_title": step.lesson.module.course.title if step.lesson and step.lesson.module and step.lesson.module.course else None,
-                # Данные из AdditionalInfo (будут заполнены ниже)
-                "step_title_short": None, "step_title_full": None,
-                "views": None, "unique_views": None, "passed": None, # Новые поля из Excel
+                "step_title_short": None,
+                "step_title_full": None,
+                "views": None,
+                "unique_views": None,
+                "passed_users_sub": None,
+                "all_users_attempted": None,
                 # ---> Новые/Обновленные Метрики <---
-                "difficulty_index": None,         # Метрика 1 (сложность = R/T сабмитов)
-                "success_rate": None,             # Метрика 2 (успешность = R/T уников)
-                "avg_attempts_per_passed": None, # Метрика 6 (среднее число попыток)
-                "comment_count": 0,               # Общее число комментов
-                "comment_rate": None,             # Метрика 7 (коэф. комментариев)
-                "usefulness_index": None,         # Метрика 8 (полезность = views/unique_views)
+                "difficulty_index": None,           # (сложность = R/T сабмитов)
+                "success_rate": None,               # (успешность = R/T уников)
+                "skip_rate_numerator_r": None,
+                "skip_rate_denominator_t": None,
+                "discrimination_index": None,       # дискриминативность
+                "skip_rate": None,                  # коэффициент пропуска
+                "completion_index": None,           # (завершение/отвал)
+                "completion_numerator_r": None,
+                "completion_denominator_t": None,
+                "avg_attempts_per_passed": None,    # (среднее число попыток)
+                "comment_count": 0,                 # Общее число комментов
+                "comment_rate": None,               # (коэф. комментариев)
+                "usefulness_index": None,           # (полезность = views/unique_views)
                 "avg_completion_time_filtered_seconds": None
                 # Метрики, которые здесь НЕ считаем из-за сложности:
                 # skip_rate, completion_index, avg_completion_time_seconds
@@ -431,11 +581,13 @@ def get_steps_structure():
                 step_data["step_title_full"] = add_info.step_title_full
                 step_data["views"] = add_info.views
                 step_data["unique_views"] = add_info.unique_views
-                step_data["passed"] = add_info.passed # Используем 'passed' из Excel/БД
+                #step_data["passed"] = add_info.passed # Используем 'passed' из Excel/БД
 
             # --- Получение агрегированных данных для текущего шага ---
-            step_submissions = submissions_data.get(step.step_id)
-            step_comments = comments_data.get(step.step_id)
+            step_submissions = submissions_data.get(step.step_id, {}) # Используем get с default {}
+            step_comments = comments_data.get(step.step_id, {})
+
+            attempted_users_count = 0
 
             # --- Расчет метрик (с проверками на None и деление на 0) ---
             if step_submissions:
@@ -443,19 +595,21 @@ def get_steps_structure():
                 correct_subs = step_submissions.get("correct_submissions", 0)
                 attempted_users = step_submissions.get("total_attempted_users", 0)
                 passed_users = step_submissions.get("passed_correctly_users", 0) # Уники, прошедшие верно
-                passed_val = step_data["passed"]
+                #passed_val = step_data["passed"]
                 unique_views_val = step_data["unique_views"]
 
-                # Метрика 1: Сложность шага (доля верных сабмитов)
+                step_data["passed_users_sub"] = passed_users
+
+                step_data["all_users_attempted"] = attempted_users
+
                 step_data["difficulty_index"] = (float(correct_subs) / total_subs) if total_subs > 0 else 0.0
 
                 # Метрика 2: Успешность шага (доля верно решивших уников)
-                if passed_val is not None and unique_views_val is not None and unique_views_val > 0:
-                    step_data["success_rate"] = float(passed_val) / unique_views_val
+                if passed_users is not None and unique_views_val is not None and unique_views_val > 0:
+                    step_data["success_rate"] = float(passed_users) / attempted_users
                 else:
-                    step_data["success_rate"] = 0.
+                    step_data["success_rate"] = 0.0
 
-                # Метрика 6: Среднее число попыток на одного прошедшего
                 step_data["avg_attempts_per_passed"] = (float(total_subs) / passed_users) if passed_users > 0 else None
 
                 # Заполняем базовые счетчики для информации
@@ -486,6 +640,65 @@ def get_steps_structure():
                  step_data["usefulness_index"] = None # Или 0.0, если просмотров нет
 
             step_data["avg_completion_time_filtered_seconds"] = avg_time_filtered_data.get(step.step_id, None)
+
+            # ---> РАСЧЕТ ОБОИХ ИНДЕКСОВ: Skip Rate и Completion Index <---
+            step_course_id = step_data["course_id"]
+            current_step_index = step_positions.get(step.step_id)
+
+            # Общие проверки
+            if step_course_id and step_course_id in course_step_order and current_step_index is not None:
+                ordered_steps = course_step_order[step_course_id]
+                is_last_step = (current_step_index == len(ordered_steps) - 1)
+                next_step_ids = ordered_steps[current_step_index + 1:] if not is_last_step else []
+                next_step_ids_set = set(next_step_ids)
+
+                # Множества пользователей для текущего шага
+                current_attempted_set = attempted_users_sets.get(step.step_id, set())
+                current_passed_set = passed_users_sets.get(step.step_id, set())
+                failed_user_ids = current_attempted_set - current_passed_set # R для Skip Rate
+
+                # --- Расчет Skip Rate (Метрика 3) ---
+                numerator_r_skip = len(failed_user_ids) # R = число не прошедших
+                step_data["skip_rate_numerator_r"] = numerator_r_skip
+                denominator_t_skip = 0 # T = число R, решивших хоть что-то дальше (верно)
+
+                if numerator_r_skip > 0 and not is_last_step:
+                    for failed_user_id in failed_user_ids:
+                         found_next_success = False
+                         for next_step_id in next_step_ids:
+                             if (failed_user_id, next_step_id) in correct_submissions_set: # Проверяем ВЕРНЫЕ
+                                 found_next_success = True; break
+                         if found_next_success: denominator_t_skip += 1
+                step_data["skip_rate_denominator_t"] = denominator_t_skip
+                step_data["skip_rate"] = (float(numerator_r_skip) / denominator_t_skip) if denominator_t_skip > 0 else (0.0 if numerator_r_skip == 0 else None) # None если R>0, T=0
+                step_data["skip_rate"] = (float(denominator_t_skip) / numerator_r_skip) if numerator_r_skip > 0 else (0.0 if denominator_t_skip == 0 else None)
+
+                # --- Расчет Completion Index (Метрика 4) ---
+                denominator_t_comp = len(current_attempted_set) # T = число пытавшихся
+                step_data["completion_denominator_t"] = denominator_t_comp
+                numerator_r_comp = 0 # R = число T, не пытавшихся ничего дальше
+
+                if denominator_t_comp > 0 and not is_last_step:
+                    for user_id in current_attempted_set: # Итерируем по всем пытавшимся
+                        attempted_subsequent = False
+                        for next_step_id in next_step_ids:
+                            if (user_id, next_step_id) in all_attempted_pairs_set: # Проверяем ЛЮБЫЕ попытки
+                                attempted_subsequent = True; break
+                        if not attempted_subsequent: numerator_r_comp += 1
+                elif is_last_step: # Если последний шаг, R=0
+                     numerator_r_comp = 0
+
+                step_data["completion_numerator_r"] = numerator_r_comp
+                step_data["completion_index"] = (float(numerator_r_comp) / denominator_t_comp) if denominator_t_comp > 0 else 0.0
+
+            else: # Не удалось определить курс/порядок или шаг последний (для skip_rate T)
+                 step_data["skip_rate"] = None; step_data["skip_rate_numerator_r"] = None; step_data["skip_rate_denominator_t"] = None
+                 step_data["completion_index"] = None if current_step_index is not None else 0.0 # 0.0 для последнего шага
+                 step_data["completion_numerator_r"] = None if current_step_index is not None else 0
+                 step_data["completion_denominator_t"] = attempted_users_count if step_submissions else 0
+            # ------------------------------------------------------
+
+            step_data["discrimination_index"] = discrimination_indices.get(step.step_id, None)
 
             results_list.append(step_data)
 
