@@ -6,3 +6,6 @@ AdditionalInfo.xlsx
 venv/
 backend/venv/
 Courses_data/
+__pycache__/
+*.py[cod]
+*$py.class
