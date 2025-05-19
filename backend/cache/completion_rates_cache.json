@@ -1,0 +1,89 @@
+{
+  "122310": {
+    "course_id": 122310,
+    "course_title": "Курс 122310",
+    "total_learners_on_course": 1140,
+    "total_submittable_steps": 145,
+    "ranges": {
+      "gte_80": {
+        "threshold_steps": 116,
+        "count": 826,
+        "percentage": 0.724561403508772
+      },
+      "gte_50_lt_80": {
+        "threshold_steps": 73,
+        "count": 65,
+        "percentage": 0.05701754385964912
+      },
+      "gte_25_lt_50": {
+        "threshold_steps": 37,
+        "count": 40,
+        "percentage": 0.03508771929824561
+      },
+      "lt_25": {
+        "threshold_steps": 37,
+        "count": 209,
+        "percentage": 0.18333333333333332
+      }
+    },
+    "message": "Calculation successful."
+  },
+  "63054": {
+    "course_id": 63054,
+    "course_title": "Курс 63054",
+    "total_learners_on_course": 384409,
+    "total_submittable_steps": 157,
+    "ranges": {
+      "gte_80": {
+        "threshold_steps": 126,
+        "count": 40082,
+        "percentage": 0.10426915082633341
+      },
+      "gte_50_lt_80": {
+        "threshold_steps": 79,
+        "count": 20383,
+        "percentage": 0.05302425281406002
+      },
+      "gte_25_lt_50": {
+        "threshold_steps": 40,
+        "count": 40036,
+        "percentage": 0.10414948661451735
+      },
+      "lt_25": {
+        "threshold_steps": 40,
+        "count": 283908,
+        "percentage": 0.7385571097450893
+      }
+    },
+    "message": "Calculation successful."
+  },
+  "99786": {
+    "course_id": 99786,
+    "course_title": "Курс 99786",
+    "total_learners_on_course": 1309,
+    "total_submittable_steps": 180,
+    "ranges": {
+      "gte_80": {
+        "threshold_steps": 144,
+        "count": 231,
+        "percentage": 0.17647058823529413
+      },
+      "gte_50_lt_80": {
+        "threshold_steps": 90,
+        "count": 213,
+        "percentage": 0.1627196333078686
+      },
+      "gte_25_lt_50": {
+        "threshold_steps": 45,
+        "count": 167,
+        "percentage": 0.12757830404889228
+      },
+      "lt_25": {
+        "threshold_steps": 45,
+        "count": 698,
+        "percentage": 0.533231474407945
+      }
+    },
+    "message": "Calculation successful."
+  }
+}

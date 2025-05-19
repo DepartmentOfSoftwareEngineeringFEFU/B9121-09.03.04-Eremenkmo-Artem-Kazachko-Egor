@@ -5,5 +5,4 @@ submissions.csv
 AdditionalInfo.xlsx
 venv/
 backend/venv/
-backend/__pycache__/
-__pycache__/
+Courses_data/

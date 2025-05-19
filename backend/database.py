@@ -5,6 +5,7 @@ from flask import Flask
 from flask_admin import Admin
 from flask_admin.contrib.sqla import ModelView
 from flask_cors import CORS
+import traceback
 
 # --- Импорты из локальных модулей ---
 try:
@@ -12,7 +13,7 @@ try:
     from .models import db, Module, Lesson, Step, Learner, Submission, Comment, Course, AdditionalStepInfo # Добавил Course и AdditionalStepInfo
     # Импортируем blueprint метрик ИЗ metric_routes.py
     from .metric_routes import metrics_bp
-    from .metric_routes import calculate_global_metrics
+    from .metric_routes import calculate_global_metrics, load_cache_from_file, TEACHERS_CACHE_FILE, COMPLETION_RATES_CACHE_FILE
     from .app_state import calculated_metrics_storage
 except ImportError as e:
     print(f"!!! Ошибка импорта: {e}")
@@ -49,15 +50,16 @@ class MyModelView(ModelView):
 class AdditionalStepInfoAdminView(MyModelView): # Наследуемся от базового
     # Явно перечисляем ВСЕ колонки, которые хотим видеть в списке,
     # включая step_id в нужном порядке.
-    column_list = ('step_id', 'step_title_short', 'step_title_full', 'difficulty', 'discrimination')
+    column_list = ('step_id', 'step_title_short', 'step_title_full', 'views', 'unique_views', 'passed')
     column_labels = { # (Опционально) Красивые названия колонок
         'step_id': 'Step ID',
         'step_title_short': 'Краткое название',
         'step_title_full': 'Полное название',
-        'difficulty': 'Сложность',
-        'discrimination': 'Дискриминативность'
+        'views': 'Просмотры',
+        'unique_views': 'Уник. просмотры',
+        'passed': 'Прохождения'
     }
-    column_sortable_list = ('step_id', 'step_title_short', 'difficulty', 'discrimination') # Колонки для сортировки
+    column_sortable_list = ('step_id', 'step_title_short', 'views', 'unique_views', 'passed') # Колонки для сортировки
     column_searchable_list = ('step_id', 'step_title_short', 'step_title_full')
 
 admin = Admin(app, name='Course Analytics Admin', template_mode="bootstrap4")
@@ -89,26 +91,53 @@ run_mode = os.environ.get('RUN_MODE') # Получаем значение пер
 print(f"\n3. Проверка режима запуска (RUN_MODE={run_mode})...")
 
 
-if run_mode == 'server':
-    print("   >>> РЕЖИМ СЕРВЕРА АКТИВИРОВАН. Запуск предварительного расчета метрик...")
-    # Этот блок выполнится ТОЛЬКО при запуске через flask run (если .flaskenv настроен)
-    # или если вручную установить RUN_MODE=server перед запуском
+print(">>> Попытка загрузки глобальных метрик из кеша...")
+teachers_loaded = False
+rates_loaded = False
+
+# Пытаемся загрузить учителей
+teachers_cache_data = load_cache_from_file(TEACHERS_CACHE_FILE)
+if teachers_cache_data is not None and isinstance(teachers_cache_data, list):
+    calculated_metrics_storage['teachers'] = teachers_cache_data
+    teachers_loaded = True
+    print("... Кеш учителей успешно загружен.")
+else:
+    print("... Кеш учителей не найден или поврежден.")
+    calculated_metrics_storage['teachers'] = {"error": "Teacher data not loaded from cache."}
+
+# Пытаемся загрузить результативность
+rates_cache_data = load_cache_from_file(COMPLETION_RATES_CACHE_FILE)
+# Проверяем, что загруженные данные - это словарь
+if rates_cache_data is not None and isinstance(rates_cache_data, dict):
+    calculated_metrics_storage['course_completion_rates'] = rates_cache_data
+    rates_loaded = True
+    print("... Кеш результативности курсов успешно загружен.")
+else:
+    print("... Кеш результативности курсов не найден или поврежден.")
+    calculated_metrics_storage['course_completion_rates'] = {"error": "Completion rate data not loaded from cache."}
+
+# Если режим сервера И хотя бы один кеш НЕ загрузился, запускаем полный пересчет
+if run_mode == 'server' and (not teachers_loaded or not rates_loaded):
+    print("\n>>> РЕЖИМ СЕРВЕРА АКТИВИРОВАН и кеш неполный. Запуск ПЕРЕСЧЕТА глобальных метрик...")
     try:
         with app.app_context(): # Нужен контекст для доступа к БД
-            calculate_global_metrics(calculated_metrics_storage)
-            print("   ...Глобальные метрики рассчитаны.")
-    except NameError:
-        print("!!! ОШИБКА: Функция calculate_global_metrics не найдена. Предрасчет пропущен.")
+            calculate_global_metrics(calculated_metrics_storage) # Эта функция теперь обновит storage И сохранит кеш
+            print("... Глобальные метрики успешно пересчитаны и сохранены в кеш.")
+    except NameError: print("!!! ОШИБКА: Функция calculate_global_metrics не найдена.")
     except Exception as e:
-        print(f"!!! КРИТИЧЕСКАЯ ОШИБКА во время расчета глобальных метрик: {e}")
-        # ... (запись ошибки в storage как была) ...
-        if 'teachers' not in calculated_metrics_storage: calculated_metrics_storage['teachers'] = {"error": "Calculation failed", "details": str(e)}
-        if 'course_completion_rate_80' not in calculated_metrics_storage: calculated_metrics_storage['course_completion_rate_80'] = {"error": "Calculation failed", "details": str(e)}
-    print("   <<< Предварительный расчет завершен.")
+        print(f"!!! КРИТИЧЕСКАЯ ОШИБКА во время пересчета глобальных метрик: {e}")
+        # Обновляем storage с информацией об ошибке (на случай если функция упала до обновления)
+        if not teachers_loaded: calculated_metrics_storage['teachers'] = {"error": "Calculation failed", "details": str(e)}
+        if not rates_loaded: calculated_metrics_storage['course_completion_rates'] = {"error": "Calculation failed", "details": str(e)}
+        traceback.print_exc()
+    print("<<< Пересчет глобальных метрик завершен.")
+elif run_mode == 'server':
+     print("\n>>> РЕЖИМ СЕРВЕРА АКТИВИРОВАН. Все глобальные метрики загружены из кеша. Пересчет не требуется.")
 else:
-    print("   >>> РЕЖИМ СЕРВЕРА НЕ АКТИВИРОВАН. Предварительный расчет метрик пропущен.")
+     print("\n>>> РЕЖИМ СЕРВЕРА НЕ АКТИВИРОВАН. Глобальные метрики загружены из кеша (если он был).")
 
-print("-" * 40); print("database.py: Завершение выполнения при импорте/запуске") ; print("-" * 40)
+
+print("-" * 40); print("database.py: Завершение выполнения при импорте/запуске"); print("-" * 40)
 
 
 if __name__ == '__main__':
