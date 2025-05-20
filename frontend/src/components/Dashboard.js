@@ -4,7 +4,7 @@ import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Container,
   Typography,
-  Grid, // Импортируем Grid
+  Grid,
   Paper,
   Box,
   Button,
@@ -33,455 +33,284 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-// Импорт API функций
 import { getStepsStructure, getCourseCompletionRates } from "../api/apiService";
-
-// Импорт компонентов
 import MetricSelector from "./MetricSelector";
-import Recommendations from "./Recommendations"; // Компонент-заглушка для рекомендаций
+import Recommendations from "./Recommendations";
 
-// --- Функции-хелперы для форматирования (можно вынести в отдельный файл utils) ---
+// --- Функции-хелперы для форматирования ---
 const formatPercentage = (value) => {
-  if (typeof value !== "number" || !isFinite(value)) return "N/A";
-  // Умножаем на 100 только если значение действительно доля (0-1),
-  // иначе просто форматируем как есть (если бэкенд вдруг вернет уже в %)
-  const displayValue = value >= 0 && value <= 1 ? value * 100 : value;
+  if (value === null || typeof value !== "number" || !isFinite(value)) return "N/A"; // Добавил value === null
+  // Если значение уже процент (например, от 0 до 100), не умножаем на 100
+  const displayValue = (value >= 0 && value <= 1 && (value * 100) <= 100 && !(value > 1 && value <=100)) ? value * 100 : value;
   return `${displayValue.toFixed(1)}%`;
 };
 const formatNumber = (value, decimals = 1) => {
-  if (value === null || typeof value === "undefined") return "N/A";
+  if (value === null || typeof value === "undefined" || !isFinite(value)) return "N/A";
   const numValue = parseFloat(value);
-  if (isNaN(numValue) || !isFinite(numValue)) return "N/A";
+  if (isNaN(numValue)) return "N/A"; // Технически уже покрыто isFinite
   return numValue.toFixed(decimals);
 };
-
-// Форматтер для целых чисел, отображающий 0
 const formatIntegerWithZero = (value) => {
+  if (value === null || typeof value === "undefined") return "N/A";
   const intValue = parseInt(value, 10);
   return isNaN(intValue) || !isFinite(intValue) ? "N/A" : intValue;
 };
 // ---------------------------------------------------------------------------------
 
-// --- Описание метрик для селектора и графика ---
-// Обновляем список в соответствии с данными, приходящими от ИЗМЕНЕННОГО /steps/structure
 const availableMetrics = [
-  {
-    value: "step_effectiveness",
-    label: "Эффективность (%)",
-    dataKey: "step_effectiveness",
-  },
-  { value: "success_rate", label: "Успешность (%)", dataKey: "success_rate" },
-  { value: "users_passed", label: "Прошли (чел.)", dataKey: "users_passed" },
-  {
-    value: "all_users_attempted",
-    label: "Пытались (чел.)",
-    dataKey: "all_users_attempted",
-  },
-  {
-    value: "avg_attempts_per_passed_user",
-    label: "Ср. попытки",
-    dataKey: "avg_attempts_per_passed_user",
-  },
-  { value: "comments_count", label: "Комментарии", dataKey: "comments_count" },
-  { value: "difficulty", label: "Difficulty", dataKey: "difficulty" },
-  {
-    value: "discrimination",
-    label: "Discrimination",
-    dataKey: "discrimination",
-  },
-  // Закомментированы метрики, которые НЕ рассчитываются в текущей версии /steps/structure
-  // { value: "avg_time", label: "Среднее время (сек)", dataKey: "avg_completion_time_seconds" },
+  { value: "success_rate", label: "Успешность шага (%)", dataKey: "success_rate" },
+  { value: "passed_users_sub", label: "Прошли шаг (чел.)", dataKey: "passed_users_sub" },
+  { value: "all_users_attempted", label: "Пытались сдать (чел.)", dataKey: "all_users_attempted" },
+  { value: "avg_attempts_per_passed", label: "Ср. попытки (успех)", dataKey: "avg_attempts_per_passed" },
+  { value: "comment_count", label: "Комментарии (кол-во)", dataKey: "comment_count" },
+  { value: "difficulty_index", label: "Сложность (индекс)", dataKey: "difficulty_index" },
+  { value: "discrimination_index", label: "Дискриминативность (индекс)", dataKey: "discrimination_index" },
+  { value: "skip_rate", label: "Доля пропуска шага (%)", dataKey: "skip_rate" },
+  { value: "completion_index", label: "Индекс \"дропа\" после шага (%)", dataKey: "completion_index" },
+  { value: "comment_rate", label: "Доля комментирующих (%)", dataKey: "comment_rate" },
+  { value: "usefulness_index", label: "Полезность (просмотры)", dataKey: "usefulness_index" },
+  { value: "avg_completion_time_filtered_seconds", label: "Ср. время (сек, фильтр.)", dataKey: "avg_completion_time_filtered_seconds" },
+  { value: "views", label: "Просмотры (всего)", dataKey: "views" },
+  { value: "unique_views", label: "Уникальные просмотры", dataKey: "unique_views" },
 ];
-// --- Конец описания метрик ---
 
 function Dashboard() {
   console.log("--- Dashboard Component Render ---");
 
   const navigate = useNavigate();
   const location = useLocation();
-  const [courseIdFromUrl, setCourseIdFromUrl] = useState(null); // Декодированный ID из URL (для заголовка и ссылок)
+
+  const [courseIdForLocalStorage, setCourseIdForLocalStorage] = useState(null);
   const [courseTitle, setCourseTitle] = useState("Загрузка...");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // --- Состояния данных ---
-  const [allStepsDataFromApi, setAllStepsDataFromApi] = useState([]); // Все шаги из API (включая метрики)
-  const [filteredStepsData, setFilteredStepsData] = useState([]); // Шаги после фильтрации по UI
-  const [modules, setModules] = useState([]); // Уникальные модули курса 63054
-  const [globalMetricsState, setGlobalMetricsState] = useState(null); // Глобальные метрики из API
+  const [allStepsDataFromApi, setAllStepsDataFromApi] = useState([]);
+  const [filteredStepsData, setFilteredStepsData] = useState([]);
+  const [modules, setModules] = useState([]);
+  const [globalMetricsState, setGlobalMetricsState] = useState(null);
 
-  // --- Состояния UI фильтров ---
-  const [selectedModuleIds, setSelectedModuleIds] = useState([]); // ID выбранных модулей для фильтрации
-  const [showOnlyWithDifficulty, setShowOnlyWithDifficulty] = useState(false); // Фильтр по наличию Difficulty/Discrimination
+  const [selectedModuleIds, setSelectedModuleIds] = useState([]);
+  const [showOnlyWithNewIndices, setShowOnlyWithNewIndices] = useState(false);
+  const [selectedMetric, setSelectedMetric] = useState(availableMetrics[0]);
+  const [selectedStepIds, setSelectedStepIds] = useState([]);
 
-  // --- Состояния для графика и таблицы ---
-  const [selectedMetric, setSelectedMetric] = useState(availableMetrics[0]); // Метрика для графика (начинаем с первой)
-  const [selectedStepIds, setSelectedStepIds] = useState([]); // ID шагов, выбранных для сравнения
-
-  // --- Функция фильтрации данных (запускается после загрузки и при смене UI фильтров) ---
-  const filterAndSetSteps = useCallback(
-    (allData, courseIdToFilter, selectedModulesFilter, uiFilters) => {
-      console.log("--- filterAndSetSteps START ---");
-      console.log(`   Исходные данные: ${allData?.length} шагов`);
-      console.log(`   Фильтр по курсу ID: ${courseIdToFilter}`);
-      console.log(
-        `   Выбранные модули: [${selectedModulesFilter?.join(", ")}]`
-      );
-      console.log(`   Фильтры UI:`, uiFilters);
-
-      if (courseIdToFilter === null || !allData || allData.length === 0) {
-        console.log(
-          "   Фильтрация прервана: нет ID курса для фильтрации или исходных данных."
-        );
-        setFilteredStepsData([]);
-        setModules([]);
-        console.log("--- filterAndSetSteps END (прервано) ---");
-        return;
-      }
-
-      // --- 1. Фильтр по ID курса ---
-      let courseSteps = allData.filter(
-        (step) => step.course_id === courseIdToFilter
-      );
-      console.log(
-        `   Шагов для курса ${courseIdToFilter} ПОСЛЕ ФИЛЬТРА по ID: ${courseSteps.length}`
-      );
-
-      // --- 2. Формирование списка модулей ЭТОГО курса (на основе отфильтрованных шагов) ---
-      const uniqueModules = [];
-      const seenModuleIds = new Set();
-      courseSteps.forEach((step) => {
-        if (step.module_id && !seenModuleIds.has(step.module_id)) {
-          // Используем module_title, если оно пришло от API, иначе формируем название
-          const moduleTitle = step.module_title || `Модуль ${step.module_id}`;
-          uniqueModules.push({
-            id: step.module_id,
-            title: moduleTitle,
-            position: step.module_position,
-          });
-          seenModuleIds.add(step.module_id);
-        }
-      });
-      uniqueModules.sort(
-        (a, b) => (a.position ?? Infinity) - (b.position ?? Infinity)
-      ); // Сортировка с учетом null/undefined
-      setModules(uniqueModules);
-      console.log("   Сформирован список модулей:", uniqueModules);
-
-      // --- 3. Применение UI фильтров к шагам этого курса ---
-      let currentlyFilteredData = [...courseSteps]; // Начинаем с шагов этого курса
-
-      // 3.1 Фильтр по наличию Difficulty/Discrimination
-      if (uiFilters.showOnlyWithDifficulty) {
-        const countBefore = currentlyFilteredData.length;
-        currentlyFilteredData = currentlyFilteredData.filter(
-          (step) =>
-            step.difficulty !== null &&
-            typeof step.difficulty === "number" &&
-            step.discrimination !== null &&
-            typeof step.discrimination === "number"
-        );
-        console.log(
-          `   После фильтра по difficulty/disc: ${currentlyFilteredData.length} (было ${countBefore})`
-        );
-      } else {
-        console.log("   Фильтр по difficulty/disc ВЫКЛЮЧЕН.");
-      }
-
-      // 3.2 Фильтр по выбранным модулям
-      if (selectedModulesFilter && selectedModulesFilter.length > 0) {
-        const countBefore = currentlyFilteredData.length;
-        const selectedSet = new Set(selectedModulesFilter);
-        currentlyFilteredData = currentlyFilteredData.filter(
-          (step) => step.module_id && selectedSet.has(step.module_id)
-        );
-        console.log(
-          `   После фильтра по модулям [${selectedModulesFilter.join(", ")}]: ${
-            currentlyFilteredData.length
-          } (было ${countBefore})`
-        );
-      } else {
-        console.log(
-          "   Фильтр по модулям НЕ ПРИМЕНЕН (ни один модуль не выбран)."
-        );
-      }
-
-      // 3.3 Опциональный фильтр по названию шага (можно убрать, если не нужен)
-      const countBeforeTitleFilter = currentlyFilteredData.length;
-      currentlyFilteredData = currentlyFilteredData.filter(
-        (step) => step.step_title_full && step.step_title_full.trim() !== ""
-      );
-      if (countBeforeTitleFilter !== currentlyFilteredData.length) {
-        console.log(
-          `   После фильтра по наличию названия шага: ${currentlyFilteredData.length} (было ${countBeforeTitleFilter})`
-        );
-      }
-
-      // 3.4 Финальная сортировка отфильтрованных данных
-      currentlyFilteredData.sort((a, b) => {
-        const modulePosA = a.module_position ?? Infinity;
-        const modulePosB = b.module_position ?? Infinity;
-        if (modulePosA !== modulePosB) return modulePosA - modulePosB;
-
-        const lessonPosA = a.lesson_position ?? Infinity;
-        const lessonPosB = b.lesson_position ?? Infinity;
-        if (lessonPosA !== lessonPosB) return lessonPosA - lessonPosB;
-
-        const stepPosA = a.step_position ?? Infinity;
-        const stepPosB = b.step_position ?? Infinity;
-        return stepPosA - stepPosB;
-      });
-      console.log("   Финальная сортировка применена.");
-
-      // Устанавливаем итоговый отфильтрованный массив
-      setFilteredStepsData(currentlyFilteredData);
-      console.log("--- filterAndSetSteps END ---");
-    },
-    [] // useCallback без зависимостей, т.к. все нужные данные приходят как аргументы
-  );
-
-  // --- Эффект для ЗАГРУЗКИ данных с API при монтировании или смене URL ---
   useEffect(() => {
-    console.log("--- Dashboard useEffect [location.search] - ЗАГРУЗКА API ---");
+    console.log("--- Dashboard: useEffect [location.search] - ЗАГРУЗКА API ---");
     const params = new URLSearchParams(location.search);
-    const idFromUrlEncoded = params.get("courseId"); // Закодированный ID из URL
+    const idFromUrlEncoded = params.get("courseId");
     console.log("   URL Encoded ID:", idFromUrlEncoded);
 
-    // Если нет ID курса в URL, показываем ошибку и выходим
     if (!idFromUrlEncoded) {
-      console.log("   ID курса не найден в URL.");
       setCourseTitle("Курс не выбран");
       setError("Не указан ID курса в адресе страницы.");
-      setLoading(false);
-      setAllStepsDataFromApi([]); // Очищаем данные
-      setModules([]);
-      setGlobalMetricsState(null);
-      return; // Прерываем выполнение эффекта
+      setLoading(false); setGlobalMetricsState(null); setAllStepsDataFromApi([]); setModules([]);
+      return;
     }
 
-    // Если ID есть, декодируем его и сбрасываем состояния
-    let decodedId;
+    let decodedIdFromUrl;
+    let numericIdForApiRequests;
+
     try {
-      decodedId = decodeURIComponent(idFromUrlEncoded);
-      console.log("   URL Decoded ID:", decodedId);
+      decodedIdFromUrl = decodeURIComponent(idFromUrlEncoded);
+      console.log("   URL Decoded ID (для localStorage/title):", decodedIdFromUrl);
+      
+      const potentialNumericId = parseInt(decodedIdFromUrl, 10);
+      if (!isNaN(potentialNumericId) && potentialNumericId.toString() === decodedIdFromUrl) {
+        numericIdForApiRequests = potentialNumericId;
+      } else {
+        const matchResult = decodedIdFromUrl.match(/(\d+)$/); // Ищем числа в конце строки
+        numericIdForApiRequests = matchResult ? parseInt(matchResult[1], 10) : NaN;
+      }
+
+      if (isNaN(numericIdForApiRequests)) {
+        throw new Error("Не удалось извлечь числовой ID курса из URL.");
+      }
+      console.log("   Numeric Course ID (для API запросов):", numericIdForApiRequests);
+
     } catch (e) {
-      console.error("   Ошибка декодирования courseId из URL:", e);
-      setError("Некорректный ID курса в URL.");
+      console.error("   Ошибка обработки courseId из URL:", e);
+      setError(`Некорректный ID курса в URL: ${e.message}`);
       setLoading(false);
       return;
     }
 
-    // Устанавливаем ID и сбрасываем состояния перед загрузкой
-    setCourseIdFromUrl(decodedId); // Сохраняем декодированный ID для заголовка/ссылок
-    setLoading(true);
-    setError(null);
-    setSelectedModuleIds([]); // Сброс фильтров
-    setShowOnlyWithDifficulty(false); // Сброс фильтров
-    setAllStepsDataFromApi([]);
-    setFilteredStepsData([]);
-    setModules([]);
-    setGlobalMetricsState(null);
+    setCourseIdForLocalStorage(decodedIdFromUrl);
+    setLoading(true); setError(null); setGlobalMetricsState(null);
+    setSelectedModuleIds([]); setShowOnlyWithNewIndices(false);
+    setAllStepsDataFromApi([]); setFilteredStepsData([]); setModules([]);
+    setSelectedMetric(availableMetrics[0]); // Сброс метрики к дефолтной
 
-    // Получение имени курса из localStorage (логика заглушки)
     const storedCourses = localStorage.getItem("uploadedCourses");
-    let courseName = "Курс не найден";
+    let courseName = `Курс ID ${numericIdForApiRequests}`; // Дефолтное название
     if (storedCourses) {
       try {
         const courses = JSON.parse(storedCourses);
-        const currentCourse = courses.find(
-          (c) => decodeURIComponent(c.id) === decodedId
-        );
+        // Ищем по закодированному или декодированному ID для большей гибкости
+        const currentCourse = courses.find(c => c.id === idFromUrlEncoded || c.id === decodedIdFromUrl || decodeURIComponent(c.id) === decodedIdFromUrl);
         if (currentCourse) courseName = currentCourse.name;
-      } catch (e) {
-        console.error("   Ошибка чтения localStorage для имени курса:", e);
-      }
+      } catch (e) { console.error("   Ошибка чтения localStorage для имени курса:", e); }
     }
     setCourseTitle(courseName);
 
-    // Асинхронная функция для загрузки данных с API
     const fetchData = async () => {
-      console.log("   fetchData: Начало загрузки API...");
+      console.log(`   fetchData: Начало загрузки API для курса ID ${numericIdForApiRequests}...`);
       try {
-        // Запрашиваем данные параллельно
-        const [completionData, stepsStructureData] = await Promise.all([
+        const [allCoursesCompletionData, stepsStructureData] = await Promise.all([
           getCourseCompletionRates(),
-          getStepsStructure(), // Этот эндпоинт теперь возвращает шаги С МЕТРИКАМИ
+          getStepsStructure(numericIdForApiRequests), // Передаем числовой ID
         ]);
 
         console.log("   fetchData: Получены ответы API.");
-        console.log("      Completion Rates:", completionData);
-        console.log("      Steps Structure with Metrics:", stepsStructureData);
-
-        // Обработка глобальных метрик
-        if (completionData && !completionData.error) {
-          setGlobalMetricsState(completionData);
-          console.log("      Глобальные метрики установлены.");
-        } else {
-          console.warn(
-            "      Не удалось загрузить Completion Rate:",
-            completionData?.details ||
-              completionData?.error ||
-              "Неизвестная ошибка"
-          );
-          setGlobalMetricsState(null); // Устанавливаем null, если есть ошибка
+        console.log("      All Courses Completion Rates:", allCoursesCompletionData);
+        console.log("      Steps Structure:", stepsStructureData);
+        if (stepsStructureData && stepsStructureData.length > 0) {
+            console.log("Структура ПЕРВОГО шага из API:", JSON.stringify(stepsStructureData[0], null, 2));
         }
 
-        // Обработка структуры шагов с метриками
-        if (
-          stepsStructureData &&
-          !stepsStructureData.error &&
-          Array.isArray(stepsStructureData)
-        ) {
-          setAllStepsDataFromApi(stepsStructureData);
-          console.log(
-            `      Структура шагов с метриками (${stepsStructureData.length} шт.) сохранена.`
-          );
+        // Обработка глобальных метрик
+        if (allCoursesCompletionData && typeof allCoursesCompletionData === 'object' && !allCoursesCompletionData.error) {
+          const currentCourseMetrics = allCoursesCompletionData[numericIdForApiRequests.toString()];
+          if (currentCourseMetrics && !currentCourseMetrics.error) {
+            setGlobalMetricsState(currentCourseMetrics);
+            console.log(`      Глобальные метрики для курса ${numericIdForApiRequests} установлены.`);
+          } else {
+            const errorMsg = `Данные о результативности для курса ID ${numericIdForApiRequests} не найдены или содержат ошибку.`;
+            console.warn("      ", errorMsg, currentCourseMetrics);
+            setGlobalMetricsState({ error: errorMsg, details: currentCourseMetrics?.details || "Нет деталей" });
+          }
         } else {
-          console.error(
-            "      Ошибка получения структуры шагов с метриками:",
-            stepsStructureData?.error
-          );
-          setAllStepsDataFromApi([]); // Устанавливаем пустой массив при ошибке
-          setError(
-            stepsStructureData?.error || "Не удалось загрузить данные по шагам."
-          );
+          const errorMsg = "Не удалось загрузить данные о результативности курсов.";
+          console.warn(`      ${errorMsg}`, allCoursesCompletionData);
+          setGlobalMetricsState({ error: errorMsg, details: allCoursesCompletionData?.details || allCoursesCompletionData?.error || "Нет деталей" });
+        }
+
+        // Обработка структуры шагов
+        if (stepsStructureData && !stepsStructureData.error && Array.isArray(stepsStructureData)) {
+          setAllStepsDataFromApi(stepsStructureData);
+          console.log(`      Структура шагов (${stepsStructureData.length} шт.) для курса ${numericIdForApiRequests} сохранена.`);
+        } else {
+          const errorMsgBase = `Не удалось загрузить данные по шагам для курса ${numericIdForApiRequests}.`;
+          const stepErrorDetails = stepsStructureData?.details || stepsStructureData?.error || "Неизвестная ошибка структуры шагов";
+          const finalErrorMsg = `${errorMsgBase} Детали: ${stepErrorDetails}`;
+          console.error(`      ${errorMsgBase}`, stepErrorDetails);
+          setAllStepsDataFromApi([]);
+          setError(prevError => prevError ? `${prevError} Также: ${finalErrorMsg}` : finalErrorMsg);
         }
       } catch (err) {
         console.error("   fetchData: КРИТИЧЕСКАЯ ОШИБКА загрузки данных:", err);
         setError(err.message || "Не удалось загрузить данные.");
-        setAllStepsDataFromApi([]); // Очищаем данные при критической ошибке
-        setGlobalMetricsState(null);
+        setAllStepsDataFromApi([]); setGlobalMetricsState(null);
       } finally {
         console.log("   fetchData: Загрузка завершена (finally).");
-        setLoading(false); // Завершаем загрузку в любом случае
+        setLoading(false);
       }
     };
+    fetchData();
+  }, [location.search]); // Зависимость от location.search
 
-    fetchData(); // Вызываем загрузку данных
-  }, [location.search]); // Перезапускаем эффект ТОЛЬКО при смене URL
+  const filterAndSetSteps = useCallback(
+    (allData, currentSelectedModuleIds, uiFilters) => {
+      console.log("--- filterAndSetSteps START ---");
+      console.log(`   Исходные данные: ${allData?.length} шагов`);
+      if (!allData || allData.length === 0) {
+        setFilteredStepsData([]); setModules([]); return;
+      }
+      const uniqueModules = []; const seenModuleIds = new Set();
+      allData.forEach((step) => {
+        if (step.module_id && !seenModuleIds.has(step.module_id)) {
+          uniqueModules.push({ id: step.module_id, title: step.module_title || `Модуль ${step.module_id}`, position: step.module_position });
+          seenModuleIds.add(step.module_id);
+        }
+      });
+      uniqueModules.sort((a, b) => (a.position ?? Infinity) - (b.position ?? Infinity));
+      setModules(uniqueModules);
 
-  // --- Эффект для ПРИМЕНЕНИЯ ФИЛЬТРОВ при изменении исходных данных или UI фильтров ---
+      let currentlyFilteredData = [...allData];
+      // Фильтр по индексам сложности/дискриминативности
+      if (uiFilters.showOnlyWithNewIndices) {
+        currentlyFilteredData = currentlyFilteredData.filter(
+          (step) =>
+            (step.difficulty_index !== null && typeof step.difficulty_index === "number") ||
+            (step.discrimination_index !== null && typeof step.discrimination_index === "number")
+        );
+      }
+      // Фильтр по модулям
+      if (currentSelectedModuleIds && currentSelectedModuleIds.length > 0) {
+        const selectedSet = new Set(currentSelectedModuleIds);
+        currentlyFilteredData = currentlyFilteredData.filter((step) => step.module_id && selectedSet.has(step.module_id));
+      }
+
+      // Сортировка
+      currentlyFilteredData.sort((a, b) => {
+        const modulePosA = a.module_position ?? Infinity;
+        const modulePosB = b.module_position ?? Infinity;
+        if (modulePosA !== modulePosB) return modulePosA - modulePosB;
+        const lessonPosA = a.lesson_position ?? Infinity;
+        const lessonPosB = b.lesson_position ?? Infinity;
+        if (lessonPosA !== lessonPosB) return lessonPosA - lessonPosB;
+        return (a.step_position ?? Infinity) - (b.step_position ?? Infinity);
+      });
+      setFilteredStepsData(currentlyFilteredData);
+      console.log("--- filterAndSetSteps END ---");
+    },
+    []
+  );
+
   useEffect(() => {
-    console.log("--- Dashboard useEffect [ФИЛЬТРАЦИЯ] ---");
-    // --- Жестко заданный ID курса для фильтрации ---
-    const REQUIRED_COURSE_ID = 63054;
-    // ---------------------------------------------
-
-    // Вызываем фильтрацию только если есть исходные данные
+    console.log("--- Dashboard: useEffect [ФИЛЬТРАЦИЯ] ---");
     if (allStepsDataFromApi.length > 0) {
-      console.log(
-        `   Запуск filterAndSetSteps с ID курса: ${REQUIRED_COURSE_ID}...`
-      );
-      filterAndSetSteps(
-        allStepsDataFromApi,
-        REQUIRED_COURSE_ID,
-        selectedModuleIds,
-        { showOnlyWithDifficulty }
-      );
+      filterAndSetSteps(allStepsDataFromApi, selectedModuleIds, { showOnlyWithNewIndices });
     } else {
-      console.log("   Пропуск filterAndSetSteps (нет исходных данных).");
-      // Если исходных данных нет, убедимся, что отфильтрованные данные тоже пусты
-      setFilteredStepsData([]);
-      setModules([]);
+      setFilteredStepsData([]); setModules([]); // Очищаем, если нет исходных данных
     }
-    // Зависимости: исходные данные и состояния UI фильтров
-  }, [
-    allStepsDataFromApi,
-    selectedModuleIds,
-    showOnlyWithDifficulty,
-    filterAndSetSteps,
-  ]); // filterAndSetSteps добавлен как зависимость, т.к. он useCallback
+  }, [allStepsDataFromApi, selectedModuleIds, showOnlyWithNewIndices, filterAndSetSteps]);
 
-  // --- Подготовка данных для ГРАФИКА ---
   const chartData = filteredStepsData.map((item) => {
     let value = null;
-    // Используем безопасный доступ к dataKey из selectedMetric
     const dataKey = selectedMetric?.dataKey;
     const metricValue = dataKey ? item[dataKey] : null;
 
-    // Обработка числовых значений
-    if (typeof metricValue === "number" && isFinite(metricValue)) {
+    if (metricValue !== null && typeof metricValue === "number" && isFinite(metricValue)) {
       value = metricValue;
-      // Корректировка для процентов (если приходят как доля 0-1)
-      if (
-        (dataKey === "success_rate" || dataKey === "step_effectiveness") &&
-        value >= 0 &&
-        value <= 1
-      ) {
+      const percentageMetricsDataKeys = ["success_rate", "skip_rate", "completion_index", "comment_rate", "difficulty_index"];
+      // Для difficulty_index не умножаем на 100, если он уже больше 1.
+      if (percentageMetricsDataKeys.includes(dataKey) && value >= 0 && value <= 1 && !(dataKey === 'difficulty_index' && value > 1)) {
         value = value * 100;
       }
     }
-    // Альтернативная метка для оси X (короткое название или ID)
-    const stepLabel = item.step_title_short || `Шаг ${item.step_id}`;
-    return {
-      step_label: stepLabel, // Ключ для оси X
-      value: value, // Значение для оси Y
-    };
+    return { step_label: item.step_title_short || `Шаг ${item.step_id}`, value: value };
   });
 
-  // Находим мин/макс для линий на графике
-  const validValuesForChart = chartData
-    .map((item) => item.value)
-    .filter((v) => typeof v === "number" && isFinite(v));
-  const minValue =
-    validValuesForChart.length > 0 ? Math.min(...validValuesForChart) : 0;
-  const maxValue =
-    validValuesForChart.length > 0 ? Math.max(...validValuesForChart) : 0;
-  console.log(
-    `Данные для графика (${selectedMetric?.label}): ${chartData.length} точек`
-  );
-  // --- Конец подготовки данных для графика ---
+  const validValuesForChart = chartData.map(item => item.value).filter(v => v !== null && typeof v === 'number' && isFinite(v));
+  const minValue = validValuesForChart.length ? Math.min(...validValuesForChart) : 0;
+  const maxValue = validValuesForChart.length ? Math.max(...validValuesForChart) : 0;
+  console.log(`Данные для графика (${selectedMetric?.label}): ${chartData.length} точек, Min: ${minValue}, Max: ${maxValue}`);
 
-  // --- Обработчики событий UI ---
   const handleStepSelection = (stepId) => {
-    console.log("handleStepSelection:", stepId);
     setSelectedStepIds((prev) => {
       const newSelection = new Set(prev);
-      if (newSelection.has(stepId)) {
-        newSelection.delete(stepId);
-      } else {
-        newSelection.add(stepId);
-      }
+      if (newSelection.has(stepId)) newSelection.delete(stepId);
+      else newSelection.add(stepId);
       return Array.from(newSelection);
     });
   };
 
   const handleCompareSteps = () => {
-    console.log("handleCompareSteps:", selectedStepIds);
     if (selectedStepIds.length < 2) {
-      alert("Пожалуйста, выберите хотя бы два шага для сравнения.");
-      return;
+      alert("Пожалуйста, выберите хотя бы два шага для сравнения."); return;
     }
     const stepsQueryParam = selectedStepIds.join(",");
-    // Логика получения закодированного ID курса (как и раньше)
-    let encodedCourseIdForURL = null;
-    const storedCourses = localStorage.getItem("uploadedCourses");
-    if (storedCourses && courseIdFromUrl) {
-      try {
-        const courses = JSON.parse(storedCourses);
-        const currentCourse = courses.find(
-          (c) => decodeURIComponent(c.id) === courseIdFromUrl
-        );
-        if (currentCourse) encodedCourseIdForURL = currentCourse.id;
-      } catch (e) {
-        console.error("Ошибка получения encodedId для сравнения:", e);
-      }
-    }
-    if (!encodedCourseIdForURL && courseIdFromUrl)
-      encodedCourseIdForURL = encodeURIComponent(courseIdFromUrl);
+    // Используем courseIdForLocalStorage, так как он соответствует ID в URL и localStorage
+    const encodedCourseIdForURL = courseIdForLocalStorage ? encodeURIComponent(courseIdForLocalStorage) : null;
 
     if (!encodedCourseIdForURL) {
       console.error("Не удалось получить ID курса для URL сравнения");
-      setError("Произошла ошибка при формировании ссылки для сравнения.");
-      return;
+      setError("Произошла ошибка при формировании ссылки для сравнения."); return;
     }
-    navigate(
-      `/compare?courseId=${encodedCourseIdForURL}&steps=${stepsQueryParam}`
-    );
+    navigate(`/compare?courseId=${encodedCourseIdForURL}&steps=${stepsQueryParam}`);
   };
-  // --- Конец обработчиков ---
 
-  // --- Определение колонок для DataGrid ---
   const columns = [
     {
       field: "selection",
@@ -489,126 +318,224 @@ function Dashboard() {
       width: 80,
       sortable: false,
       filterable: false,
-      renderCell: (params) => (
-        <FormControlLabel
-          sx={{ mr: 0 }}
-          control={
-            <Checkbox
-              size="small"
-              checked={selectedStepIds.includes(params.row.step_id)}
-              onChange={() => handleStepSelection(params.row.step_id)}
-              name={`checkbox-${params.row.step_id}`}
-              aria-label={`Выбрать шаг ${params.row.step_id}`}
-            />
-          }
-          label=""
-        />
-      ),
+      // renderCell ВСЕГДА использует params
+      renderCell: (params) => {
+        if (!params.row || typeof params.row.step_id === 'undefined') {
+          return null;
+        }
+        return (
+          <FormControlLabel
+            sx={{ mr: 0 }}
+            control={
+              <Checkbox
+                size="small"
+                checked={selectedStepIds.includes(params.row.step_id)}
+                onChange={() => handleStepSelection(params.row.step_id)}
+                aria-label={`Выбрать шаг ${params.row.step_id}`}
+              />
+            }
+            label=""
+          />
+        );
+      },
     },
     { field: "step_id", headerName: "ID", width: 90 },
     {
       field: "step_title_full",
       headerName: "Название шага",
       width: 350,
-      valueGetter: (value) => value || "-",
+      valueGetter: (fieldValue, row) => row?.step_title_full, // fieldValue будет row.step_title_full
+      valueFormatter: (valueToFormat) => { // Принимает только значение
+        if (valueToFormat === null || typeof valueToFormat === 'undefined' || String(valueToFormat).trim() === "") {
+            return "N/A";
+        }
+        return String(valueToFormat);
+      }
     },
     {
       field: "step_title_short",
       headerName: "Метка",
       width: 130,
-      valueGetter: (value) => value || "-",
+      valueGetter: (fieldValue, row) => row?.step_title_short,
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined' || String(valueToFormat).trim() === "") {
+            return "N/A";
+        }
+        return String(valueToFormat);
+      }
     },
     {
-      field: "module_title",
+      field: "module_title", // Это поле может отсутствовать в row, мы его вычисляем
       headerName: "Модуль",
       width: 200,
-      // Находим название модуля в состоянии 'modules'
-      valueGetter: (value, row) =>
-        modules.find((m) => m.id === row.module_id)?.title ||
-        `ID: ${row.module_id}` ||
-        "-",
+      // valueGetter здесь КЛЮЧЕВОЙ, так как module_title нет напрямую в row
+      valueGetter: (fieldValue, row) => { // fieldValue здесь будет значением row.module_title (если оно есть), но нам нужен row.module_id
+        if (!row || typeof row.module_id === 'undefined') return null;
+        const module = modules.find((m) => m.id === row.module_id);
+        return module ? module.title : `ID: ${row.module_id}`; // Сразу формируем строку, если title нет
+      },
+      // valueFormatter здесь получает уже результат valueGetter
+      valueFormatter: (valueToFormat) => {
+        // valueToFormat это либо module.title, либо "ID: xxx"
+        if (valueToFormat === null || typeof valueToFormat === 'undefined' || String(valueToFormat).trim() === "") {
+            return "N/A"; // Если valueGetter вернул null
+        }
+        return String(valueToFormat);
+      }
     },
     // --- Колонки с метриками ---
-    {
-      field: "step_effectiveness",
-      headerName: "Эффект.(%)",
-      type: "number",
-      width: 100,
-      valueFormatter: (value) => formatPercentage(value),
-    },
     {
       field: "success_rate",
       headerName: "Успешн.(%)",
       type: "number",
       width: 100,
-      valueFormatter: (value) => formatPercentage(value),
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatPercentage(valueToFormat);
+      }
     },
     {
-      field: "users_passed",
+      field: "passed_users_sub",
       headerName: "Прошли",
       type: "number",
       width: 80,
-      valueFormatter: (value) => formatIntegerWithZero(value),
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatIntegerWithZero(valueToFormat);
+      }
     },
     {
       field: "all_users_attempted",
       headerName: "Пытались",
       type: "number",
       width: 90,
-      valueFormatter: (value) => formatIntegerWithZero(value),
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatIntegerWithZero(valueToFormat);
+      }
     },
     {
-      field: "avg_attempts_per_passed_user",
+      field: "avg_attempts_per_passed",
       headerName: "Ср. поп.",
       type: "number",
       width: 90,
-      valueFormatter: (value) => formatNumber(value, 1),
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatNumber(valueToFormat, 1);
+      }
     },
     {
-      field: "comments_count",
+      field: "comment_count",
       headerName: "Комм.",
       type: "number",
       width: 80,
-      valueFormatter: (value) => formatIntegerWithZero(value),
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatIntegerWithZero(valueToFormat);
+      }
     },
     {
-      field: "difficulty",
-      headerName: "Diff.",
+      field: "difficulty_index",
+      headerName: "Сложн.инд",
       type: "number",
-      width: 80,
-      valueFormatter: (value) =>
-        typeof value === "number" ? value.toFixed(3) : "",
+      width: 100,
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatNumber(valueToFormat, 3);
+      }
     },
     {
-      field: "discrimination",
-      headerName: "Disc.",
+      field: "discrimination_index",
+      headerName: "Дискр.инд",
       type: "number",
-      width: 80,
-      valueFormatter: (value) =>
-        typeof value === "number" ? value.toFixed(3) : "",
+      width: 100,
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatNumber(valueToFormat, 3);
+      }
     },
-    // --- Колонка действий ---
+    {
+      field: "skip_rate",
+      headerName: "Пропуск(%)",
+      type: "number",
+      width: 110,
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatPercentage(valueToFormat);
+      }
+    },
+    {
+      field: "completion_index",
+      headerName: "Дроп(%)",
+      type: "number",
+      width: 90,
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatPercentage(valueToFormat);
+      }
+    },
+    {
+      field: "comment_rate",
+      headerName: "Комм.(%)",
+      type: "number",
+      width: 100,
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatPercentage(valueToFormat);
+      }
+    },
+    {
+      field: "usefulness_index",
+      headerName: "Полезн.",
+      type: "number",
+      width: 90,
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatNumber(valueToFormat, 1);
+      }
+    },
+    {
+      field: "avg_completion_time_filtered_seconds",
+      headerName: "Ср.время",
+      type: "number",
+      width: 100,
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return `${formatNumber(valueToFormat, 0)} сек`;
+      }
+    },
+    {
+      field: "views",
+      headerName: "Просмотры",
+      type: "number",
+      width: 110,
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatIntegerWithZero(valueToFormat);
+      }
+    },
+    {
+      field: "unique_views",
+      headerName: "Уник.пр.",
+      type: "number",
+      width: 100,
+      valueFormatter: (valueToFormat) => {
+        if (valueToFormat === null || typeof valueToFormat === 'undefined') return "N/A";
+        return formatIntegerWithZero(valueToFormat);
+      }
+    },
     {
       field: "actions",
       headerName: "Анализ",
       sortable: false,
       filterable: false,
       width: 100,
+      // renderCell ВСЕГДА использует params
       renderCell: (params) => {
-        // Логика получения ID для ссылки (как и раньше)
-        let encodedCourseIdForURL = null;
-        const storedCourses = localStorage.getItem("uploadedCourses");
-        if (storedCourses && courseIdFromUrl) {
-          try {
-            const courses = JSON.parse(storedCourses);
-            const currentCourse = courses.find(
-              (c) => decodeURIComponent(c.id) === courseIdFromUrl
-            );
-            if (currentCourse) encodedCourseIdForURL = currentCourse.id;
-          } catch {}
+        if (!params.row || typeof params.row.step_id === 'undefined') {
+            return <Button variant="outlined" size="small" disabled>Детали</Button>;
         }
-        if (!encodedCourseIdForURL && courseIdFromUrl)
-          encodedCourseIdForURL = encodeURIComponent(courseIdFromUrl);
+        const encodedCourseIdForURL = courseIdForLocalStorage ? encodeURIComponent(courseIdForLocalStorage) : null;
         return (
           <Button
             variant="outlined"
@@ -621,428 +548,184 @@ function Dashboard() {
                 : "#"
             }
           >
-            {" "}
-            Детали{" "}
+            Детали
           </Button>
         );
       },
     },
-  ];
-  // --- Конец определения колонок ---
+];
+  const dataForGrid = filteredStepsData.length > 1 ? filteredStepsData.slice(1) : [];
 
-  // ========================================================================
-  // --- JSX Рендеринг Компонента ---
-  // ========================================================================
-  console.log(
-    `Рендеринг. Loading: ${loading}, Error: ${error}, Filtered Steps: ${filteredStepsData.length}`
-  );
+  console.log(`Рендеринг. Loading: ${loading}, Error: ${error}, Steps for Grid: ${dataForGrid.length}, GlobalMetrics:`, globalMetricsState);
 
-  // 1. Состояние загрузки
-  if (loading) {
-    return (
-      <Container sx={{ display: "flex", justifyContent: "center", mt: 5 }}>
-        <CircularProgress />
-      </Container>
-    );
-  }
 
-  // 2. Состояние ошибки (если нет данных для отображения)
-  if (error && filteredStepsData.length === 0) {
+  if (loading) { return (<Container sx={{ display: "flex", justifyContent: "center", mt: 5 }}><CircularProgress /></Container>); }
+  
+  const isMajorError = error && 
+                     !allStepsDataFromApi.length && 
+                     (!globalMetricsState || (globalMetricsState && globalMetricsState.error && Object.keys(globalMetricsState).length <=2 && !globalMetricsState.ranges)) ;
+  if (isMajorError) {
     return (
       <Container sx={{ mt: 4 }}>
         <Alert severity="error">Ошибка загрузки данных: {error}</Alert>
-        <Button onClick={() => window.location.reload()} sx={{ mt: 2 }}>
-          Попробовать снова
-        </Button>
+        <Button onClick={() => window.location.reload()} sx={{ mt: 2 }}>Попробовать снова</Button>
       </Container>
     );
   }
+  const partialError = error && !isMajorError;
 
-  // 3. Основное отображение дашборда
-  const globalMetrics = globalMetricsState; // Для краткости
 
   return (
     <Container maxWidth="xl" sx={{ mt: 2, mb: 4 }}>
-      {/* Заголовок */}
-      <Typography variant="h4" gutterBottom>
-        Дашборд аналитики курса: {courseTitle}
-      </Typography>
+      <Typography variant="h4" gutterBottom>Дашборд аналитики курса: {courseTitle}</Typography>
+      {partialError && (<Alert severity="warning" sx={{ mb: 3 }}>{error} (Некоторые данные могут быть неактуальны или не загружены)</Alert> )}
 
-      {/* Отображение частичной ошибки (если есть) */}
-      {error && filteredStepsData.length > 0 && (
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          {error} (Некоторые данные могут быть неактуальны)
-        </Alert>
-      )}
-
-      {/* Глобальные метрики */}
-      {globalMetrics && globalMetrics.ranges ? (
+      {globalMetricsState && globalMetricsState.ranges && !globalMetricsState.error ? (
         <Grid container spacing={2} sx={{ mb: 3 }}>
-          {Object.entries(globalMetrics.ranges).map(([key, rangeData]) => {
-            let title = key; // ... (логика названий как раньше)
+          {Object.entries(globalMetricsState.ranges).map(([key, rangeData]) => {
+            let title = key;
             if (key === "gte_80") title = "Завершили (≥80%)";
             else if (key === "gte_50_lt_80") title = "Прогресс (50-79%)";
             else if (key === "gte_25_lt_50") title = "Начали (25-49%)";
             else if (key === "lt_25") title = "Низкий прогресс (<25%)";
             return (
-              // Используем Grid V2
-              <Grid xs={12} sm={6} md={3} key={key}>
-                <Paper
-                  sx={{
-                    p: 2,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    height: "100%",
-                  }}
-                >
-                  <Typography
-                    component="h2"
-                    variant="h6"
-                    color="primary"
-                    gutterBottom
-                    sx={{ textAlign: "center" }}
-                  >
-                    {title}
-                  </Typography>
-                  <Typography component="p" variant="h4">
-                    {typeof rangeData.percentage === "number"
-                      ? `${(rangeData.percentage * 100).toFixed(1)}%`
-                      : "N/A"}
-                  </Typography>
+              <Grid item xs={12} sm={6} md={3} key={key}>
+                <Paper sx={{ p: 2, display: "flex", flexDirection: "column", alignItems: "center", height: "100%" }}>
+                  <Typography component="h2" variant="h6" color="primary" gutterBottom sx={{ textAlign: "center" }}>{title}</Typography>
+                  <Typography component="p" variant="h4">{formatPercentage(rangeData.percentage)}</Typography>
                   <Typography variant="caption" color="textSecondary">
-                    ({rangeData.count ?? "?"} из{" "}
-                    {globalMetrics.total_learners ?? "?"})
+                    ({rangeData.count ?? "?"} из {globalMetricsState.total_learners_on_course ?? "?"})
                   </Typography>
                 </Paper>
               </Grid>
             );
           })}
         </Grid>
-      ) : globalMetrics && globalMetrics.error ? (
+      ) : globalMetricsState && globalMetricsState.error ? (
         <Alert severity="warning" sx={{ mb: 3 }}>
-          Не удалось загрузить глоб. метрики:{" "}
-          {globalMetrics.details || globalMetrics.error}
+          Не удалось загрузить глоб. метрики для этого курса: {globalMetricsState.details || globalMetricsState.error}
         </Alert>
       ) : (
-        !loading && (
-          <Typography sx={{ mb: 3, fontStyle: "italic" }}>
-            Глобальные метрики не загружены.
-          </Typography>
-        )
+        !loading && (<Typography sx={{ mb: 3, fontStyle: "italic" }}>Глобальные метрики не загружены или не найдены для этого курса.</Typography>)
       )}
 
-      {/* Фильтры UI */}
-      <Paper
-        sx={{
-          p: 2,
-          mb: 3,
-          display: "flex",
-          gap: 2,
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
-        {/* Метка "Фильтры:" */}
-        <Typography variant="body1" sx={{ mr: 1, fontWeight: "bold" }}>
-          Фильтры:
-        </Typography>
-
-        {/* Селектор Модулей */}
-        <FormControl
-          sx={{ m: 1, minWidth: 250, maxWidth: 400 }} // Стили для размера и отступов
-          size="small" // Компактный размер
-          disabled={modules.length === 0} // Блокируем, если список модулей пуст
-        >
-          <InputLabel id="module-select-label">Модули</InputLabel>
-          <Select
+      <Paper sx={{ p: 2, mb: 3, display: "flex", gap: 2, alignItems: "center", flexWrap: "wrap" }}>
+        <Typography variant="body1" sx={{ mr: 1, fontWeight: "bold" }}>Фильтры:</Typography>
+        <FormControl sx={{ m: 1, minWidth: 250, maxWidth: 400 }} size="small" disabled={modules.length === 0}>
+           <InputLabel id="module-select-label">Модули</InputLabel>
+           <Select
             labelId="module-select-label"
             id="module-select"
-            multiple // Включаем множественный выбор
-            value={selectedModuleIds} // Текущие выбранные ID из состояния
-            // Основной обработчик изменения выбора
+            multiple
+            value={selectedModuleIds}
             onChange={(event) => {
-              const value = event.target.value; // value всегда массив для multiple
-              const SELECT_ALL_VALUE = "___SELECT_ALL___"; // Специальный маркер
-
-              // Если в массиве есть маркер "Выбрать все"
-              if (value.includes(SELECT_ALL_VALUE)) {
-                const allValidModuleIds = modules
-                  .map((m) => m.id)
-                  .filter((id) => id != null);
-                const currentValidSelectedIds = selectedModuleIds.filter(
-                  (id) => id != null
-                );
-                const isAllCurrentlySelected =
-                  modules.length > 0 &&
-                  currentValidSelectedIds.length === allValidModuleIds.length;
-
-                // Если все уже выбраны -> снять выделение
-                if (isAllCurrentlySelected) {
-                  setSelectedModuleIds([]);
+                const value = event.target.value;
+                const SELECT_ALL_VALUE = "___SELECT_ALL___";
+                if (value.includes(SELECT_ALL_VALUE)) {
+                  const allValidModuleIds = modules.map((m) => m.id).filter((id) => id != null);
+                  const currentValidSelectedIds = selectedModuleIds.filter((id) => id != null);
+                  if (modules.length > 0 && currentValidSelectedIds.length === allValidModuleIds.length) {
+                    setSelectedModuleIds([]);
+                  } else {
+                    setSelectedModuleIds(allValidModuleIds);
+                  }
                 } else {
-                  // Иначе -> выбрать все валидные
-                  setSelectedModuleIds(allValidModuleIds);
+                  setSelectedModuleIds(value.filter((id) => id != null));
                 }
-              } else {
-                // Если маркера нет - это обычный выбор/снятие модулей
-                // Фильтруем null/undefined перед сохранением
-                const validSelection = value.filter((id) => id != null);
-                setSelectedModuleIds(validSelection);
-              }
             }}
-            input={<OutlinedInput label="Модули" />} // Input для отображения label
-            // Функция для рендеринга отображения в поле Select
+            input={<OutlinedInput label="Модули" />}
             renderValue={(selected) => {
-              // Фильтруем null/undefined перед отображением
-              const validSelected = selected.filter((id) => id != null);
-              const allValidModuleIds = modules
-                .map((m) => m.id)
-                .filter((id) => id != null);
-              // Проверяем, выбраны ли все валидные
-              const isAllSelected =
-                modules.length > 0 &&
-                validSelected.length === allValidModuleIds.length;
-
-              if (isAllSelected) {
-                // Если выбраны все
-                return <em>Все модули ({modules.length})</em>;
-              } else if (validSelected.length === 0) {
-                // Если ничего не выбрано
-                return <em>Все модули ({modules.length})</em>; // Показываем общее кол-во
-              } else {
-                // Если выбраны некоторые - показываем чипы
-                return (
-                  <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                    {validSelected.map((id) => {
-                      const module = modules.find((m) => m.id === id);
-                      return (
-                        <Chip
-                          key={id}
-                          label={module?.title || `ID: ${id}`}
-                          size="small"
-                        />
-                      );
-                    })}
-                  </Box>
-                );
-              }
+                const validSelected = selected.filter(id => id != null);
+                const allValidModuleIds = modules.map(m => m.id).filter(id => id != null);
+                if (modules.length > 0 && validSelected.length === allValidModuleIds.length) {
+                  return <em>Все модули ({modules.length})</em>;
+                } else if (validSelected.length === 0) {
+                  return <em>Все модули ({modules.length || 0})</em>;
+                } else {
+                  return (
+                    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                      {validSelected.map((id) => {
+                        const module = modules.find((m) => m.id === id);
+                        return (<Chip key={id} label={module?.title || `ID: ${id}`} size="small" />);
+                      })}
+                    </Box>
+                  );
+                }
             }}
-            // Настройки выпадающего меню
-            MenuProps={{
-              PaperProps: { style: { maxHeight: 224, width: 300 } },
-            }}
-          >
-            {/* Опция "Выбрать все / Снять выделение" */}
-            <MenuItem
-              value="___SELECT_ALL___" // Специальное значение для идентификации
-              disabled={modules.length === 0} // Блокируем, если нет модулей
-              // Убираем onClick, вся логика в onChange Select'а
-            >
-              <Checkbox
-                // Логика состояния чекбокса (проверяем по валидным ID)
-                checked={
-                  modules.length > 0 &&
-                  selectedModuleIds.filter((id) => id != null).length ===
-                    modules.map((m) => m.id).filter((id) => id != null).length
-                }
-                indeterminate={
-                  selectedModuleIds.filter((id) => id != null).length > 0 &&
-                  selectedModuleIds.filter((id) => id != null).length <
-                    modules.map((m) => m.id).filter((id) => id != null).length
-                }
-                size="small"
-              />
-              <ListItemText
-                primary={
-                  <em>
-                    {/* Динамический текст */}
-                    {modules.length > 0 &&
-                    selectedModuleIds.filter((id) => id != null).length ===
-                      modules.map((m) => m.id).filter((id) => id != null).length
-                      ? "Снять выделение"
-                      : "Выбрать все"}
-                  </em>
-                }
-              />
-            </MenuItem>
-
-            {/* Рендеринг списка модулей */}
-            {modules.map(
-              (module) =>
-                // Проверяем, что ID модуля валидный перед рендерингом
-                module.id != null ? (
-                  <MenuItem key={module.id} value={module.id}>
-                    <Checkbox
-                      checked={selectedModuleIds.includes(module.id)}
-                      size="small"
-                    />
-                    <ListItemText
-                      primary={module.title || `Модуль ${module.id}`}
-                    />
-                  </MenuItem>
-                ) : null // Не рендерим MenuItem для невалидных модулей
-            )}
-          </Select>
+            MenuProps={{ PaperProps: { style: { maxHeight: 224, width: 300 } }, }}
+           >
+             <MenuItem value="___SELECT_ALL___" disabled={modules.length === 0}>
+                <Checkbox
+                    checked={modules.length > 0 && selectedModuleIds.filter(id => id != null).length === modules.map(m => m.id).filter(id => id != null).length}
+                    indeterminate={selectedModuleIds.filter(id => id != null).length > 0 && selectedModuleIds.filter(id => id != null).length < modules.map(m => m.id).filter(id => id != null).length}
+                    size="small"
+                />
+                <ListItemText primary={<em>{modules.length > 0 && selectedModuleIds.filter(id => id != null).length === modules.map(m => m.id).filter(id => id != null).length ? "Снять выделение" : "Выбрать все"}</em>} />
+             </MenuItem>
+             {modules.map((module) => module.id != null ? ( <MenuItem key={module.id} value={module.id}> <Checkbox checked={selectedModuleIds.includes(module.id)} size="small" /> <ListItemText primary={module.title || `Модуль ${module.id}`} /> </MenuItem> ) : null )}
+           </Select>
         </FormControl>
+             </Paper>
 
-        {/* Чекбокс "Только с Difficulty/Discrimination" */}
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={showOnlyWithDifficulty}
-              onChange={(event) =>
-                setShowOnlyWithDifficulty(event.target.checked)
-              }
-              size="small"
-            />
-          }
-          label="Только с Difficulty/Discrimination"
-          // Добавляем отступ слева для экранов sm и больше
-          sx={{ ml: { xs: 0, sm: 2 } }}
-        />
-      </Paper>
-
-      {/* График */}
-      {filteredStepsData.length > 0 ? (
+      {dataForGrid.length > 0 ? ( // Проверяем dataForGrid для графика тоже
         <Paper sx={{ p: 2, mb: 3 }}>
-          {/* Заголовок графика и селектор метрики */}
-          <Box
-            sx={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              flexWrap: "wrap",
-              mb: 2,
-            }}
-          >
-            <Typography variant="h6">
-              Статистика по шагам ({selectedMetric?.label ?? "Выберите метрику"}
-              )
-            </Typography>
+          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", mb: 2, }}>
+            <Typography variant="h6">Статистика по шагам ({selectedMetric?.label ?? "Выберите метрику"})</Typography>
             <MetricSelector
               metrics={availableMetrics}
-              selectedMetric={selectedMetric}
+              selectedMetric={selectedMetric || availableMetrics[0]}
               onChange={setSelectedMetric}
             />
           </Box>
-          {/* Сам график */}
           <ResponsiveContainer width="100%" height={300}>
-            <LineChart
-              data={chartData}
-              margin={{ top: 20, right: 30, left: 20 }}
-            >
+            <LineChart data={chartData.length > 1 ? chartData.slice(1) : []} margin={{ top: 5, right: 30, left: 0, bottom: 55 }}> {/* Пропускаем первый шаг и для графика */}
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis
-                   dataKey="step_label" // Название поля с метками шагов
-                   // tick={false}      // <--- УБЕРИ ИЛИ ЗАКОММЕНТИРУЙ ЭТУ СТРОКУ, ЕСЛИ ОНА ЕСТЬ
-                   angle={-60}          // Оставляем поворот, если нужен
-                   textAnchor="end"     // Оставляем выравнивание
-                   height={70}          // Оставляем высоту для повернутых меток
-                   interval={9}
-                   tick={{ fontSize: 8 }}
-              />
+              <XAxis dataKey="step_label" angle={-45} textAnchor="end" interval={9} tick={{ fontSize: 10 }} height={70} />
               <YAxis />
               <Tooltip />
-              <Legend
-                verticalAlign="bottom"
-                // Функция для рендеринга текста легенды с увеличенным шрифтом
-                formatter={(value, entry, index) => (
-                  <span style={{ fontSize: "20px", color: entry.color }}>
-                    {" "}
-                    {/* Можешь изменить '14px' */}
-                    {value}
-                  </span>
-                )}
-              />
-              <Line
-                isAnimationActive={false}
-                type="monotone"
-                dataKey="value"
-                name={selectedMetric?.label ?? ""}
-                stroke="#8884d8"
-                activeDot={{ r: 6 }}
-                dot={{ r: 2 }}
-                connectNulls
-              />
-              {/* Линии Min/Max */}
-              {minValue !== maxValue &&
-                minValue !== Infinity &&
-                minValue !== 0 && (
-                  <ReferenceLine
-                    y={minValue}
-                    label={{
-                      value: `Min: ${minValue.toFixed(1)}`,
-                      position: "insideTopLeft",
-                    }}
-                    stroke="red"
-                    strokeDasharray="3 3"
-                  />
-                )}
-              {minValue !== maxValue &&
-                maxValue !== -Infinity &&
-                maxValue !== 0 && (
-                  <ReferenceLine
-                    y={maxValue}
-                    label={{
-                      value: `Max: ${maxValue.toFixed(1)}`,
-                      position: "insideTopRight",
-                    }}
-                    stroke="green"
-                    strokeDasharray="3 3"
-                  />
-                )}
+              <Legend verticalAlign="top" height={36}/>
+              <Line isAnimationActive={false} type="monotone" dataKey="value" name={selectedMetric?.label ?? ""} stroke="#8884d8" activeDot={{ r: 6 }} dot={{ r: 2 }} connectNulls />
+              {minValue !== maxValue && minValue !== Infinity && minValue !== 0 && (<ReferenceLine y={minValue} label={{ value: `Min: ${minValue.toFixed(1)}`, position: "insideTopLeft" }} stroke="red" strokeDasharray="3 3" />)}
+              {minValue !== maxValue && maxValue !== -Infinity && maxValue !== 0 && (<ReferenceLine y={maxValue} label={{ value: `Max: ${maxValue.toFixed(1)}`, position: "insideTopRight" }} stroke="green" strokeDasharray="3 3" />)}
             </LineChart>
           </ResponsiveContainer>
         </Paper>
       ) : (
-        !loading &&
-        !error && (
-          <Typography
-            sx={{ textAlign: "center", color: "text.secondary", my: 5 }}
-          >
-            Нет шагов, соответствующих выбранным фильтрам.
-          </Typography>
-        )
+        !loading && !error && (<Typography sx={{ textAlign: "center", color: "text.secondary", my: 5 }}>Нет шагов для отображения (проверьте фильтры или данные курса).</Typography>)
       )}
 
-      {/* Таблица */}
-      {filteredStepsData.length > 0 && (
+      {dataForGrid.length > 0 && (
         <>
-          <Paper sx={{ height: 700, width: "100%", mb: 3 }}>
+          <Paper sx={{ height: 600, width: "100%", mb: 3 }}>
             <DataGrid
               density="compact"
-              getRowId={(row) => row.step_id}
-              rows={filteredStepsData}
-              columns={columns} // Используем обновленные колонки
+              getRowId={(row) => {
+                if (typeof row.step_id === 'undefined' || row.step_id === null) {
+                  console.error("DataGrid: getRowId - step_id is undefined or null for row. Assigning a temporary ID. Row data:", row);
+                  return `temp_id_${Math.random().toString(36).substr(2, 9)}`;
+                }
+                return row.step_id;
+              }}
+              rows={dataForGrid} // Используем dataForGrid
+              columns={columns}
               initialState={{
                 sorting: { sortModel: [{ field: "step_id", sort: "asc" }] },
-                pagination: { paginationModel: { pageSize: 100 } },
+                pagination: { paginationModel: { pageSize: 50 } },
               }}
               pageSizeOptions={[25, 50, 100]}
               checkboxSelection={false}
               disableRowSelectionOnClick
             />
           </Paper>
-          {/* Кнопка сравнения */}
           <Box sx={{ mt: 2, mb: 3, textAlign: "center" }}>
-            <Button
-              variant="contained"
-              color="primary"
-              size="large"
-              onClick={handleCompareSteps}
-              disabled={selectedStepIds.length < 2}
-            >
+            <Button variant="contained" color="primary" size="large" onClick={handleCompareSteps} disabled={selectedStepIds.length < 2}>
               Сравнить выбранные шаги ({selectedStepIds.length})
             </Button>
           </Box>
         </>
       )}
-
-      {/* Рекомендации (заглушка) */}
       <Recommendations />
     </Container>
   );
 }
-
 export default Dashboard;

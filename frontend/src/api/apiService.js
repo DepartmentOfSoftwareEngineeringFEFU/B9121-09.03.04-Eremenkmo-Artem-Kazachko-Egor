@@ -109,8 +109,12 @@ const request = async (endpoint, options = {}) => {
  * Получение структуры ВСЕХ шагов (включая доп. инфо и связи).
  * @returns {Promise<Array<object>>} - Массив объектов с данными по всем шагам.
  */
-export const getStepsStructure = () => {
-    return request(`/metrics/steps/structure`);
+export const getStepsStructure = (courseId = null) => {
+    let endpoint = `/metrics/steps/structure`;
+    if (courseId !== null && courseId !== undefined) {
+        endpoint += `?course_id=${courseId}`;
+    }
+    return request(endpoint);
 };
 
 /**
