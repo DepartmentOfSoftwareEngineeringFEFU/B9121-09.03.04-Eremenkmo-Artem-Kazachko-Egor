@@ -11,3 +11,19 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+.metric-text--good {
+  color: green;
+  font-weight: 500; /* Или bold, если предпочитаешь */
+}
+
+.metric-text--bad {
+  color: red;
+  font-weight: 500;
+}
+
+.metric-text--normal {
+  color: orange; /* Или можно оставить цвет по умолчанию (inherit) */
+}
+.step-name--bad { color: red; font-weight: 500; }
+.step-name--normal { color: orange; font-weight: 500; }
+.step-name--good { color: green; font-weight: 500; }

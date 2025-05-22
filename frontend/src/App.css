@@ -27,6 +27,36 @@
 .App-link {
   color: #61dafb;
 }
+/* Пример в App.css или index.css */
+.super-app-theme--good {
+  background-color: rgba(0, 128, 0, 0.15); /* Светло-зеленый фон */
+  color: darkgreen; /* Темно-зеленый текст */
+  font-weight: 500;
+}
+
+.super-app-theme--bad {
+  background-color: rgba(255, 0, 0, 0.15); /* Светло-красный фон */
+  color: darkred; /* Темно-красный текст */
+  font-weight: 500;
+}
+
+.super-app-theme--normal {
+  background-color: rgba(255, 165, 0, 0.1); /* Светло-оранжевый фон */
+  /* color: #cc8400; */ /* Можно задать цвет текста, если нужно */
+}
+
+/* Если хочешь красить только текст, а не фон: */
+.text-good {
+  color: green;
+  font-weight: bold;
+}
+.text-bad {
+  color: red;
+  font-weight: bold;
+}
+.text-normal {
+  color: orange;
+}
 
 @keyframes App-logo-spin {
   from {

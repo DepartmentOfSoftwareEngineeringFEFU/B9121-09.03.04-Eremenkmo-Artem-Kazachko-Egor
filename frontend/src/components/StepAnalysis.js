@@ -1,6 +1,6 @@
 // src/components/StepAnalysis.jsx
 import React, { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useLocation } from "react-router-dom";
 import {
   Container,
   Typography,
@@ -8,106 +8,340 @@ import {
   Box,
   CircularProgress,
   Alert,
-  Grid, // Импортируем Grid
+  Grid,
+  Divider,
+  List, // Для списка инсайтов
+  ListItem, // Для списка инсайтов
+  ListItemText, // Для списка инсайтов
 } from "@mui/material";
 
-// --- ИМПОРТИРУЕМ ТОЛЬКО ОДНУ НОВУЮ ФУНКЦИЮ ---
-import { getAllStepMetrics } from "../api/apiService"; // Убедись, что путь правильный
+import { getStepsStructure } from "../api/apiService";
 
-// --- Функции-хелперы для форматирования (оставляем как были) ---
-const formatPercentage = (value) => {
-  if (typeof value !== "number" || !isFinite(value)) return "N/A";
-  return `${(value * 100).toFixed(1)}%`;
+// Функции форматирования
+const formatPercentage = (value, isIndexNotRate = false) => {
+  if (value === null || typeof value !== "number" || !isFinite(value))
+    return "N/A";
+  if (!isIndexNotRate) {
+    return `${(value * 100).toFixed(1)}%`;
+  }
+  return parseFloat(value).toFixed(3);
 };
-const formatTimeInMinutes = (value) => {
-  if (value === null || typeof value === "undefined") return "N/A";
-  const numValueInSeconds = parseFloat(value);
+
+const formatTime = (valueInSeconds) => {
   if (
-    isNaN(numValueInSeconds) ||
-    !isFinite(numValueInSeconds) ||
-    numValueInSeconds < 0
+    valueInSeconds === null ||
+    typeof valueInSeconds !== "number" ||
+    !isFinite(valueInSeconds) ||
+    valueInSeconds < 0
   )
     return "N/A";
-  const minutes = numValueInSeconds / 60;
-  return `${minutes.toFixed(1)} мин`;
+  const minutes = Math.floor(valueInSeconds / 60);
+  const seconds = Math.round(valueInSeconds % 60);
+  if (
+    minutes === 0 &&
+    seconds === 0 &&
+    valueInSeconds > 0 &&
+    valueInSeconds < 1
+  ) {
+    // Для очень малых значений < 1 сек
+    return `<1 сек`;
+  }
+  if (minutes === 0) {
+    return `${seconds} сек`;
+  }
+  return `${minutes} мин ${seconds} сек`;
 };
+
 const formatNumber = (value, decimals = 1) => {
-  if (value === null || typeof value === "undefined") return "N/A";
-  const numValue = parseFloat(value);
-  if (isNaN(numValue) || !isFinite(numValue)) return "N/A";
-  return numValue.toFixed(decimals);
+  if (value === null || typeof value !== "number" || !isFinite(value))
+    return "N/A";
+  return parseFloat(value).toFixed(decimals);
 };
+
 const formatInteger = (value) => {
-  if (value === null || typeof value === "undefined") return "N/A";
-  const intValue = parseInt(value, 10);
-  if (isNaN(intValue) || !isFinite(intValue)) return "N/A";
-  return intValue;
+  if (value === null || typeof value !== "number" || !isFinite(value))
+    return "N/A";
+  const intVal = parseInt(value, 10);
+  return isNaN(intVal) ? "N/A" : intVal;
 };
-// ----------------------------------------------------------------------
 
 function StepAnalysis() {
-  const { stepId } = useParams();
-  const [stepMetrics, setStepMetrics] = useState(null); // Инициализируем как null
+  const { stepId: stepIdFromParams } = useParams();
+  const location = useLocation();
+
+  const [stepMetrics, setStepMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [courseTitle, setCourseTitle] = useState("");
 
   useEffect(() => {
     const fetchStepData = async () => {
-      if (!stepId) {
+      const params = new URLSearchParams(location.search);
+      const courseIdParam = params.get("courseId");
+
+      if (!stepIdFromParams) {
         setError("ID шага не найден в URL.");
         setLoading(false);
         return;
       }
+      if (!courseIdParam) {
+        setError("ID курса не найден в URL. Невозможно загрузить данные шага.");
+        setLoading(false);
+        return;
+      }
+
+      let numericCourseId;
+      let numericStepId;
+      try {
+        numericCourseId = parseInt(courseIdParam, 10);
+        numericStepId = parseInt(stepIdFromParams, 10);
+        if (isNaN(numericCourseId) || isNaN(numericStepId)) {
+          throw new Error("ID курса или шага не является числом.");
+        }
+      } catch (e) {
+        setError(`Некорректный ID курса или шага: ${e.message}`);
+        setLoading(false);
+        return;
+      }
+
+      const storedCourses = localStorage.getItem("uploadedCourses");
+      let cName = `Анализ шага в курсе ID ${numericCourseId}`;
+      if (storedCourses) {
+        try {
+          const courses = JSON.parse(storedCourses);
+          const currentCourseData = courses.find(
+            (c) => c.id === numericCourseId
+          );
+          if (currentCourseData) cName = currentCourseData.name;
+        } catch (e) {
+          console.error("Ошибка чтения localStorage для имени курса:", e);
+        }
+      }
+      setCourseTitle(cName);
 
       setLoading(true);
       setError(null);
-      setStepMetrics(null); // Сбрасываем метрики перед загрузкой
+      setStepMetrics(null);
 
       try {
-        console.log(`StepAnalysis: Загрузка ВСЕХ метрик для шага ${stepId}...`);
-        const combinedMetrics = await getAllStepMetrics(stepId);
         console.log(
-          "StepAnalysis: Полученные скомбинированные метрики:",
-          combinedMetrics
+          `StepAnalysis: Загрузка структуры ВСЕХ шагов для курса ${numericCourseId}, чтобы найти шаг ${numericStepId}...`
         );
+        const allStepsInCourse = await getStepsStructure(numericCourseId);
 
-        if (combinedMetrics && combinedMetrics.error) {
+        if (
+          !allStepsInCourse ||
+          allStepsInCourse.error ||
+          !Array.isArray(allStepsInCourse)
+        ) {
           throw new Error(
-            combinedMetrics.details ||
-              combinedMetrics.error ||
-              `Ошибка от API для шага ${stepId}`
+            allStepsInCourse?.details ||
+              allStepsInCourse?.error ||
+              `Ошибка API при загрузке структуры курса ${numericCourseId}`
           );
         }
 
-        // Сохраняем весь полученный объект (может быть null, если API вернул 204)
-        setStepMetrics(combinedMetrics);
+        const foundStep = allStepsInCourse.find(
+          (s) => s.step_id === numericStepId
+        );
+
+        if (foundStep) {
+          console.log(
+            `StepAnalysis: Найден шаг ${numericStepId} с данными:`,
+            JSON.stringify(foundStep, null, 2)
+          );
+          setStepMetrics(foundStep);
+        } else {
+          throw new Error(
+            `Шаг с ID ${numericStepId} не найден в курсе ID ${numericCourseId}.`
+          );
+        }
       } catch (err) {
         console.error(
-          `StepAnalysis: Ошибка загрузки данных для шага ${stepId}:`,
+          `StepAnalysis: Ошибка загрузки данных для шага ${numericStepId} в курсе ${numericCourseId}:`,
           err
         );
         setError(err.message || "Не удалось загрузить метрики шага.");
-        setStepMetrics(null); // Убедимся, что null при ошибке
+        setStepMetrics(null);
       } finally {
         setLoading(false);
       }
     };
 
     fetchStepData();
-  }, [stepId]); // Зависимость только от stepId
+  }, [stepIdFromParams, location.search]);
 
-  // --- Отображение ---
+  // Функция для генерации аналитических заметок
+  const getStepInsights = (metrics) => {
+    if (!metrics) return { strengths: [], areasForImprovement: [] };
 
-  // Состояние загрузки
+    const insights = {
+      strengths: [],
+      areasForImprovement: [],
+    };
+
+    const {
+      success_rate,
+      difficulty_index,
+      discrimination_index,
+      comment_count,
+      unique_views,
+      completion_index,
+      skip_rate,
+      avg_attempts_per_passed,
+      usefulness_index,
+      passed_users_sub,
+    } = metrics;
+
+    // Success Rate
+    if (typeof success_rate === "number") {
+      if (success_rate >= 0.85)
+        insights.strengths.push({
+          metric: "Успешность шага",
+          value: formatPercentage(success_rate),
+          note: "Отличная проходимость, студенты хорошо справляются.",
+        });
+      else if (success_rate < 0.6)
+        insights.areasForImprovement.push({
+          metric: "Успешность шага",
+          value: formatPercentage(success_rate),
+          note: "Низкая, рассмотрите упрощение или доп. материалы.",
+        });
+    }
+
+    // Difficulty Index
+    if (typeof difficulty_index === "number") {
+      if (difficulty_index >= 0.75)
+        insights.strengths.push({
+          metric: "Сложность (индекс)",
+          value: formatPercentage(difficulty_index, true),
+          note: "Шаг воспринимается как относительно легкий.",
+        });
+      else if (difficulty_index < 0.4)
+        insights.areasForImprovement.push({
+          metric: "Сложность (индекс)",
+          value: formatPercentage(difficulty_index, true),
+          note: "Высокая сложность, может требовать пересмотра.",
+        });
+    }
+
+    // Discrimination Index
+    if (typeof discrimination_index === "number") {
+      if (discrimination_index >= 0.35)
+        insights.strengths.push({
+          metric: "Дискриминативность",
+          value: formatPercentage(discrimination_index, true),
+          note: "Шаг хорошо разделяет сильных и слабых студентов.",
+        });
+      else if (discrimination_index < 0.15 && discrimination_index !== null)
+        insights.areasForImprovement.push({
+          metric: "Дискриминативность",
+          value: formatPercentage(discrimination_index, true),
+          note: "Плохо разделяет студентов, требует анализа (слишком легкий/сложный, нечеткая формулировка).",
+        });
+    }
+
+    // Avg Attempts
+    if (typeof avg_attempts_per_passed === "number") {
+      if (avg_attempts_per_passed <= 1.5)
+        insights.strengths.push({
+          metric: "Ср. попытки (успех)",
+          value: formatNumber(avg_attempts_per_passed, 1),
+          note: "Студенты быстро находят верное решение.",
+        });
+      else if (avg_attempts_per_passed > 3.5)
+        insights.areasForImprovement.push({
+          metric: "Ср. попытки (успех)",
+          value: formatNumber(avg_attempts_per_passed, 1),
+          note: "Много попыток, возможно, задание неясно или слишком вариативно.",
+        });
+    }
+
+    // Completion Index ("Дроп")
+    if (typeof completion_index === "number") {
+      if (completion_index <= 0.03 && completion_index !== null)
+        insights.strengths.push({
+          metric: "Удержание (низкий 'дроп')",
+          value: formatPercentage(completion_index),
+          note: "Студенты активно продолжают обучение после этого шага.",
+        });
+      else if (completion_index > 0.15)
+        insights.areasForImprovement.push({
+          metric: "Индекс 'дропа'",
+          value: formatPercentage(completion_index),
+          note: "Высокий, критическая точка отвала студентов.",
+        });
+    }
+
+    // Usefulness Index
+    if (typeof usefulness_index === "number") {
+      if (usefulness_index >= 8)
+        insights.strengths.push({
+          metric: "Полезность (просмотры/уник.)",
+          value: formatNumber(usefulness_index, 1),
+          note: "Высокая вовлеченность в просмотры, материал интересен.",
+        });
+      else if (usefulness_index < 2.5 && unique_views > 20)
+        insights.areasForImprovement.push({
+          metric: "Полезность (просмотры/уник.)",
+          value: formatNumber(usefulness_index, 1),
+          note: "Низкая, студенты мало пересматривают материал.",
+        });
+    }
+
+    // Comment Rate
+    if (typeof comment_rate === "number" && typeof comment_count === "number") {
+      if (comment_rate >= 0.08 && comment_count > 5)
+        insights.strengths.push({
+          metric: "Активность в комментариях",
+          value: `${formatInteger(comment_count)} (${formatPercentage(
+            comment_rate
+          )})`,
+          note: "Студенты активно обсуждают, что может способствовать обучению.",
+        });
+      else if (comment_count > 15 && comment_rate < 0.05 && unique_views > 30)
+        insights.areasForImprovement.push({
+          metric: "Комментарии",
+          value: formatInteger(comment_count),
+          note: "Много комментариев, но низкая доля комментирующих от просмотров. Возможно, группа активных студентов задает много вопросов или есть технические проблемы.",
+        });
+    }
+
+    // Skip Rate
+    if (typeof skip_rate === "number") {
+      if (skip_rate > 0.35)
+        insights.areasForImprovement.push({
+          metric: "Доля пропуска шага",
+          value: formatPercentage(skip_rate),
+          note: "Значительная часть студентов, не справившись, пропускает шаг. Возможно, он слишком сложен или не воспринимается как обязательный.",
+        });
+    }
+
+    if (
+      insights.strengths.length === 0 &&
+      insights.areasForImprovement.length === 0
+    ) {
+      insights.areasForImprovement.push({
+        note: "Ключевые метрики находятся в средних диапазонах или требуют дополнительного контекста для интерпретации. Для более глубокого анализа изучите все показатели.",
+      });
+    }
+    return insights;
+  };
+
   if (loading) {
     return (
-      <Container sx={{ display: "flex", justifyContent: "center", mt: 5 }}>
+      <Container
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "50vh",
+        }}
+      >
         <CircularProgress />
       </Container>
     );
   }
-
-  // Состояние ошибки
   if (error) {
     return (
       <Container sx={{ mt: 4 }}>
@@ -115,165 +349,250 @@ function StepAnalysis() {
       </Container>
     );
   }
-
-  // ----> ВАЖНО: Проверка на null перед рендерингом данных <----
-  // Если загрузка завершилась без ошибок, но данных нет (API вернул null или пустой объект)
   if (!stepMetrics) {
     return (
       <Container sx={{ mt: 4 }}>
-        <Alert severity="warning">
+        <Alert severity="info">
           Данные для этого шага не найдены или не загружены.
         </Alert>
       </Container>
     );
   }
 
-  // Если все проверки пройдены, рендерим данные
+  // Деструктуризация уже сделана для getStepInsights, здесь можно использовать те же переменные
+  const {
+    step_id,
+    step_title_full,
+    step_title_short,
+    step_type,
+    step_cost,
+    lesson_id,
+    lesson_position,
+    module_id,
+    module_position,
+    module_title,
+    course_id,
+    step_position,
+    views,
+    unique_views,
+    passed_users_sub,
+    all_users_attempted,
+    difficulty_index,
+    success_rate,
+    discrimination_index,
+    skip_rate,
+    completion_index,
+    avg_attempts_per_passed,
+    comment_count,
+    comment_rate,
+    usefulness_index,
+    avg_completion_time_filtered_seconds,
+  } = stepMetrics;
+
+  const insights = getStepInsights(stepMetrics);
+
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Box
-        sx={{ display: "flex", alignItems: "center", mb: 3, flexWrap: "wrap" }}
-      >
-        {/* ----> Безопасный доступ к данным с fallback <---- */}
-        <Typography variant="h4">
-          Анализ шага:{" "}
-          {stepMetrics?.step_title_full ||
-            stepMetrics?.step_title_short ||
-            stepMetrics?.step_id ||
-            "Неизвестный шаг"}
-          {(stepMetrics?.step_title_full || stepMetrics?.step_title_short) &&
-            stepMetrics?.step_id && ( // Показываем ID, если есть название
-              <Typography
-                variant="subtitle1"
-                component="span"
-                sx={{ ml: 1, color: "text.secondary" }}
-              >
-                {" "}
-                (ID: {stepMetrics.step_id})
-              </Typography>
-            )}
+    <Container maxWidth="lg" sx={{ mt: 2, mb: 4 }}>
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h4" component="h1" gutterBottom>
+          {step_title_full || step_title_short || `Анализ шага ID: ${step_id}`}
+        </Typography>
+        <Typography variant="subtitle1" color="text.secondary">
+          Курс: "{courseTitle}" (ID: {course_id})
+          {module_title && ` | Модуль: ${module_title}`}
+          {!module_title && module_id && ` | Модуль ID: ${module_id}`}
+          {lesson_id && ` | Урок ID: ${lesson_id}`}
+        </Typography>
+        <Typography
+          variant="caption"
+          display="block"
+          color="text.secondary"
+          sx={{ mt: 0.5 }}
+        >
+          {step_type && `Тип: ${step_type}`}
+          {typeof step_cost === "number" && ` | Баллы: ${step_cost}`}
+          {typeof module_position === "number" &&
+            ` | Поз. модуля: ${module_position}`}
+          {typeof lesson_position === "number" &&
+            ` | Поз. урока: ${lesson_position}`}
+          {typeof step_position === "number" &&
+            ` | Поз. шага: ${step_position}`}
         </Typography>
       </Box>
 
-      {/* Используем Grid V2 */}
-      <Grid container spacing={3}>
-        {/* Блок 1: Основные показатели прохождения */}
-        <Grid xs={12} md={6} lg={4}>
-          {" "}
-          {/* V2 синтаксис */}
-          <Paper sx={{ p: 3, height: "100%" }}>
+      <Grid container spacing={2.5}>
+        <Grid item xs={12} md={6} lg={4}>
+          <Paper sx={{ p: 2, height: "100%" }}>
             <Typography variant="h6" gutterBottom color="primary">
-              Прохождение
+              Просмотры и Вовлеченность
             </Typography>
-            {/* ----> Безопасный доступ <---- */}
+            <Divider sx={{ mb: 1.5 }} />
             <Typography>
-              <b>Успешно прошли:</b> {formatInteger(stepMetrics?.users_passed)}{" "}
-              из {formatInteger(stepMetrics?.all_users_attempted)} пользователей
-            </Typography>
-            <Typography>
-              <b>Результативность (Прошли / Приступили):</b>{" "}
-              {formatPercentage(stepMetrics?.step_effectiveness)}
+              <b>Просмотры (всего):</b> {formatInteger(views)}
             </Typography>
             <Typography>
-              <b>Среднее время до верного ответа:</b>{" "}
-              {formatTimeInMinutes(stepMetrics?.avg_completion_time_seconds)}
+              <b>Уникальные просмотры:</b> {formatInteger(unique_views)}
+            </Typography>
+            <Typography>
+              <b>Полезность (просмотры/уник.):</b>{" "}
+              {formatNumber(usefulness_index, 2)}
+            </Typography>
+            <Typography>
+              <b>Пытались сдать:</b> {formatInteger(all_users_attempted)}
             </Typography>
           </Paper>
         </Grid>
 
-        {/* Блок 2: Показатели попыток и взаимодействия */}
-        <Grid xs={12} md={6} lg={4}>
-          {" "}
-          {/* V2 синтаксис */}
-          <Paper sx={{ p: 3, height: "100%" }}>
+        <Grid item xs={12} md={6} lg={4}>
+          <Paper sx={{ p: 2, height: "100%" }}>
             <Typography variant="h6" gutterBottom color="primary">
-              Попытки и Взаимодействие
+              Результативность
             </Typography>
-            {/* ----> Безопасный доступ <---- */}
+            <Divider sx={{ mb: 1.5 }} />
             <Typography>
-              <b>Успешность попыток (Верные / Все):</b>{" "}
-              {formatPercentage(stepMetrics?.success_rate)}
-            </Typography>
-            <Typography>
-              <b>Среднее число попыток:</b>{" "}
-              {formatNumber(stepMetrics?.avg_attempts_per_passed_user)}
+              <b>Успешно справились:</b> {formatInteger(passed_users_sub)}
             </Typography>
             <Typography>
-              <b>Количество комментариев:</b>{" "}
-              {formatInteger(stepMetrics?.comments_count)}
+              <b>Успешность (% прошли/пытались):</b>{" "}
+              {formatPercentage(success_rate)}
+            </Typography>
+            <Typography>
+              <b>Среднее кол-во попыток (для успеха):</b>{" "}
+              {formatNumber(avg_attempts_per_passed, 1)}
+            </Typography>
+            <Typography>
+              <b>Среднее время выполнения:</b>{" "}
+              {formatTime(avg_completion_time_filtered_seconds)}
             </Typography>
           </Paper>
         </Grid>
 
-        {/* Блок 3: Дополнительная информация (отображаем, только если есть данные) */}
-        {/* ----> Безопасный доступ и условный рендеринг блока <---- */}
-        {(stepMetrics?.difficulty !== null ||
-          stepMetrics?.discrimination !== null ||
-          stepMetrics?.step_type) && (
-          <Grid xs={12} md={6} lg={4}>
-            {" "}
-            {/* V2 синтаксис */}
-            <Paper sx={{ p: 3, height: "100%" }}>
-              <Typography variant="h6" gutterBottom color="primary">
-                Доп. Инфо
-              </Typography>
-              {/* Условный рендеринг каждого поля */}
-              {stepMetrics?.step_type && (
-                <Typography>
-                  <b>Тип шага:</b> {stepMetrics.step_type}
-                </Typography>
-              )}
-              {stepMetrics?.difficulty !== null && (
-                <Typography>
-                  <b>Difficulty:</b> {formatNumber(stepMetrics.difficulty, 3)}
-                </Typography>
-              )}
-              {stepMetrics?.discrimination !== null && (
-                <Typography>
-                  <b>Discrimination:</b>{" "}
-                  {formatNumber(stepMetrics.discrimination, 3)}
-                </Typography>
-              )}
-              {stepMetrics?.lesson_id && (
-                <Typography>
-                  <b>ID Урока:</b> {stepMetrics.lesson_id}
-                </Typography>
-              )}
-              {stepMetrics?.step_position && (
-                <Typography>
-                  <b>Позиция:</b> {stepMetrics.step_position}
-                </Typography>
-              )}
-            </Paper>
-          </Grid>
-        )}
+        <Grid item xs={12} md={6} lg={4}>
+          <Paper sx={{ p: 2, height: "100%" }}>
+            <Typography variant="h6" gutterBottom color="primary">
+              Качество Задания
+            </Typography>
+            <Divider sx={{ mb: 1.5 }} />
+            <Typography>
+              <b>Сложность (индекс):</b>{" "}
+              {formatPercentage(difficulty_index, true)}
+            </Typography>
+            <Typography>
+              <b>Дискриминативность (индекс):</b>{" "}
+              {formatPercentage(discrimination_index, true)}
+            </Typography>
+            <Typography>
+              <b>Доля пропуска (% не сдавших, пошли дальше):</b>{" "}
+              {formatPercentage(skip_rate)}
+            </Typography>
+            <Typography>
+              <b>Индекс "дропа" (% решивших, дропнули курс):</b>{" "}
+              {formatPercentage(completion_index)}
+            </Typography>
+          </Paper>
+        </Grid>
 
-        {/* Блок 4: Рекомендации (Заглушка) */}
-        <Grid xs={12}>
-          {" "}
-          {/* V2 синтаксис */}
-          <Paper sx={{ p: 2, mt: 2, backgroundColor: "action.hover" }}>
-            {" "}
-            {/* Используем цвет из темы */}
+        <Grid item xs={12} md={6} lg={4}>
+          <Paper sx={{ p: 2, height: "100%" }}>
+            <Typography variant="h6" gutterBottom color="primary">
+              Обратная связь
+            </Typography>
+            <Divider sx={{ mb: 1.5 }} />
+            <Typography>
+              <b>Кол-во комментариев:</b> {formatInteger(comment_count)}
+            </Typography>
+            <Typography>
+              <b>Доля комментирующих (% от уник. просмотров):</b>{" "}
+              {formatPercentage(comment_rate)}
+            </Typography>
+          </Paper>
+        </Grid>
+
+        <Grid item xs={12}>
+          <Paper sx={{ p: 2, mt: 1, backgroundColor: "action.hover" }}>
             <Typography variant="h6" gutterBottom>
-              Рекомендации (Заглушка)
+              Аналитические заметки по шагу
             </Typography>
-            <Typography paragraph>
-              Здесь будут отображаться автоматические рекомендации на основе
-              анализа метрик этого шага.
-            </Typography>
-            {/* Пример условной рекомендации */}
-            {stepMetrics?.step_effectiveness < 0.5 && (
-              <Typography variant="body2" color="warning.main">
-                - Низкая результативность. Возможно, стоит пересмотреть
-                сложность или формулировку задания.
-              </Typography>
+
+            {insights.strengths.length > 0 && (
+              <>
+                <Typography
+                  variant="subtitle1"
+                  sx={{ color: "success.dark", fontWeight: "medium", mt: 1 }}
+                >
+                  Положительные моменты:
+                </Typography>
+                <List dense disablePadding sx={{ pl: 1 }}>
+                  {insights.strengths.map((item, index) => (
+                    <ListItem
+                      key={`strength-${index}`}
+                      sx={{ pt: 0.2, pb: 0.2 }}
+                    >
+                      <ListItemText
+                        primary={
+                          <>
+                            <b>{item.metric}:</b> {item.value}
+                          </>
+                        }
+                        secondary={item.note}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </>
             )}
-            {stepMetrics?.comments_count > 10 && ( // Примерный порог
-              <Typography variant="body2" color="info.main">
-                - Большое количество комментариев. Проверьте, нет ли частых
-                вопросов или неясностей.
-              </Typography>
+
+            {insights.areasForImprovement.length > 0 && (
+              <>
+                <Typography
+                  variant="subtitle1"
+                  sx={{
+                    color: "warning.dark",
+                    mt: insights.strengths.length > 0 ? 2 : 1,
+                    fontWeight: "medium",
+                  }}
+                >
+                  Области для внимания / улучшения:
+                </Typography>
+                <List dense disablePadding sx={{ pl: 1 }}>
+                  {insights.areasForImprovement.map((item, index) => (
+                    <ListItem
+                      key={`improvement-${index}`}
+                      sx={{ pt: 0.2, pb: 0.2 }}
+                    >
+                      <ListItemText
+                        primary={
+                          item.metric ? (
+                            <>
+                              <Box
+                                component="span"
+                                sx={{ fontWeight: "medium" }}
+                              >
+                                {item.metric}:
+                              </Box>{" "}
+                              {item.value}
+                            </>
+                          ) : null
+                        }
+                        secondary={item.note}
+                        primaryTypographyProps={
+                          item.metric ? {} : { fontStyle: "italic" }
+                        }
+                        secondaryTypographyProps={
+                          item.metric
+                            ? { sx: { color: "text.secondary" } }
+                            : {
+                                sx: {
+                                  color: "text.primary",
+                                  fontStyle: "italic",
+                                },
+                              }
+                        }
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </>
             )}
           </Paper>
         </Grid>

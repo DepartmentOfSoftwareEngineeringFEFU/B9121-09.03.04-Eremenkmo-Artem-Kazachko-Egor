@@ -1,3 +1,4 @@
+// src/components/UploadCourse.js
 import React, { useState, useEffect } from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
@@ -19,23 +20,25 @@ import {
   TableRow,
   Chip,
   TextField,
-  IconButton, // Добавляем IconButton
+  IconButton,
 } from "@mui/material";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import VisibilityIcon from "@mui/icons-material/Visibility";
-import DeleteIcon from "@mui/icons-material/Delete"; // Добавляем иконку удаления
-import { csvExamples } from "./UploadCourseExamples"; // Убедитесь, что этот файл существует и экспортирует csvExamples
+import DeleteIcon from "@mui/icons-material/Delete";
+import FunctionsIcon from '@mui/icons-material/Functions'; // Можно использовать иконку для Классификации, если есть подходящая
+import { csvExamples } from "./UploadCourseExamples";
 
 const requiredFileTypes = ["learners", "structure", "submissions", "comments"];
+const PREDEFINED_BACKEND_COURSE_IDS_QUEUE = [63054, 99786, 122310];
 
 function UploadCourse() {
   const navigate = useNavigate();
-  const [dialogOpen, setDialogOpen] = useState(false); // Для диалога примеров
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogData, setDialogData] = useState({
     title: "",
     headers: [],
     rows: [],
-  }); // Для диалога примеров
+  });
   const [selectedFiles, setSelectedFiles] = useState(
     requiredFileTypes.reduce((acc, type) => {
       acc[type] = null;
@@ -44,30 +47,23 @@ function UploadCourse() {
   );
   const [error, setError] = useState(null);
   const [uploadedCourses, setUploadedCourses] = useState(() => {
-    // Получаем из localStorage при инициализации
     const storedCourses = localStorage.getItem("uploadedCourses");
     try {
-      // Добавляем проверку на валидность JSON
       return storedCourses ? JSON.parse(storedCourses) : [];
     } catch (e) {
       console.error("Ошибка парсинга localStorage['uploadedCourses']:", e);
-      localStorage.removeItem("uploadedCourses"); // Очищаем невалидные данные
+      localStorage.removeItem("uploadedCourses");
       return [];
     }
   });
 
-  // --- Состояния для модального окна названия курса ---
   const [isNameModalOpen, setIsNameModalOpen] = useState(false);
   const [modalCourseName, setModalCourseName] = useState("");
   const [modalError, setModalError] = useState(null);
-  // --- Конец состояний ---
 
-  // --- Состояния для диалога подтверждения удаления ---
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [courseToDelete, setCourseToDelete] = useState(null); // Храним ID и имя курса для удаления
-  // --- Конец состояний ---
+  const [courseToDelete, setCourseToDelete] = useState(null);
 
-  // Сохраняем в localStorage при изменении uploadedCourses
   useEffect(() => {
     try {
       localStorage.setItem("uploadedCourses", JSON.stringify(uploadedCourses));
@@ -79,26 +75,23 @@ function UploadCourse() {
     }
   }, [uploadedCourses]);
 
-  // Открываем модальное окно при выборе всех файлов
   useEffect(() => {
     const allFilesSelected = requiredFileTypes.every(
       (type) => selectedFiles[type]
     );
-    // Открываем модалку только если все файлы выбраны И она еще не открыта
     if (allFilesSelected && !isNameModalOpen) {
-      setError(null); // Сбрасываем предыдущие ошибки при готовности
+      setError(null);
       setIsNameModalOpen(true);
     }
   }, [selectedFiles, isNameModalOpen]);
 
-  // --- Обработчики ---
   const handleFileChange = (event, fileType) => {
     const file = event.target.files[0];
     if (file) {
       setSelectedFiles((prev) => ({ ...prev, [fileType]: file }));
-      setError(null); // Сбрасываем общую ошибку
+      setError(null);
     }
-    event.target.value = null; // Позволяет выбрать тот же файл снова
+    event.target.value = null;
   };
 
   const handleShowExample = (fileType) => {
@@ -112,165 +105,183 @@ function UploadCourse() {
 
   const handleModalCourseNameChange = (event) => {
     setModalCourseName(event.target.value);
-    if (modalError) setModalError(null); // Сбрасываем ошибку при вводе
+    if (modalError) setModalError(null);
   };
 
   const handleCloseNameModal = () => {
     setIsNameModalOpen(false);
-    setModalCourseName(""); // Очищаем поле
-    setModalError(null); // Очищаем ошибку
-    // Сбрасываем выбранные файлы при отмене, чтобы модалка не открылась снова
+    setModalCourseName("");
+    setModalError(null);
     setSelectedFiles(
-      requiredFileTypes.reduce((acc, type) => {
-        acc[type] = null;
-        return acc;
-      }, {})
+      requiredFileTypes.reduce((acc, type) => ({ ...acc, [type]: null }), {})
     );
   };
 
   const handleSaveCourse = async () => {
     const trimmedName = modalCourseName.trim();
     if (!trimmedName) {
-      setModalError("Пожалуйста, введите название курса.");
+      setModalError("Пожалуйста, введите название для этого анализа.");
+      return;
+    }
+    setModalError(null);
+
+    let assignedBackendCourseId = null;
+    const usedBackendIds = new Set(uploadedCourses.map((course) => course.id));
+
+    for (const id of PREDEFINED_BACKEND_COURSE_IDS_QUEUE) {
+      if (!usedBackendIds.has(id)) {
+        assignedBackendCourseId = id;
+        break;
+      }
+    }
+
+    if (assignedBackendCourseId === null) {
+      setError(
+        "Все доступные слоты для анализа курсов заняты. Пожалуйста, удалите существующий анализ, чтобы добавить новый."
+      );
+      setIsNameModalOpen(false);
+      setModalCourseName("");
+      setSelectedFiles(
+        requiredFileTypes.reduce((acc, type) => ({ ...acc, [type]: null }), {})
+      );
       return;
     }
 
-    const courseName = trimmedName;
-    // Генерируем ID здесь, чтобы он был доступен для сохранения и ссылки
-    const courseId = `${encodeURIComponent(courseName)}-${Date.now()}`;
-    setModalError(null);
-    setIsNameModalOpen(false); // Закрываем модальное окно до "загрузки"
+    setIsNameModalOpen(false);
+
+    const courseIdForLinkAndStorage = assignedBackendCourseId;
+    const userGivenName = trimmedName;
 
     console.log("Выбранные файлы для сохранения:", selectedFiles);
-    console.log("Название курса:", courseName);
-    console.log("ID курса:", courseId); // Логгируем ID
+    console.log("Название анализа:", userGivenName);
+    console.log(
+      "Автоматически назначенный ID курса с сервера:",
+      courseIdForLinkAndStorage
+    );
 
     try {
-      // --- Здесь будет логика отправки на бэкенд ---
-      const formData = new FormData();
-      requiredFileTypes.forEach((type) => {
-        formData.append(type, selectedFiles[type], selectedFiles[type].name);
-      });
-      formData.append("courseName", courseName);
-      formData.append("courseId", courseId); // Отправляем и ID на бэкенд (если нужно)
+      // Имитация вызова API (заглушка)
+      // const formData = new FormData();
+      // requiredFileTypes.forEach((type) => {
+      //   if (selectedFiles[type]) {
+      //     formData.append(type, selectedFiles[type], selectedFiles[type].name);
+      //   }
+      // });
+      // formData.append("courseName", userGivenName);
+      // formData.append("associatedBackendCourseId", courseIdForLinkAndStorage.toString());
+      // await uploadCourse(formData); // Это твоя заглушка из apiService.js
 
-      console.log("Имитация отправки данных на backend...");
-      // const response = await fetch('/api/upload', { method: 'POST', body: formData });
-      // if (!response.ok) { throw new Error(`Ошибка сервера: ${response.statusText}`) }
-      // const result = await response.json();
-      // const backendCourseId = result.courseId; // ID может прийти от бэкенда
-      // --- Конец логики отправки ---
+      await new Promise((resolve) => setTimeout(resolve, 500)); // Имитация задержки
 
-      await new Promise((resolve) => setTimeout(resolve, 500)); // Имитация задержки сети
-
-      const newCourse = {
-        id: courseId, // Сохраняем сгенерированный (или полученный от бэкенда) ID
-        name: courseName,
-        date: new Date().toLocaleDateString("ru-RU"), // Формат даты
-        dashboardLink: `/dashboard?courseId=${courseId}`, // Используем ID в ссылке
+      const newCourseEntry = {
+        id: courseIdForLinkAndStorage, // Числовой ID
+        name: userGivenName,
+        date: new Date().toLocaleDateString("ru-RU"),
+        dashboardLink: `/dashboard?courseId=${courseIdForLinkAndStorage}`,
+        // Добавляем ссылку для классификации
+        classificationLink: `/classification?courseId=${courseIdForLinkAndStorage}`, // <--- НОВАЯ ССЫЛКА
       };
 
-      // Обновляем состояние и localStorage
-      setUploadedCourses((prevCourses) => [...prevCourses, newCourse]);
-
-      // Очищаем состояния
+      setUploadedCourses((prevCourses) => [...prevCourses, newCourseEntry]);
       setModalCourseName("");
       setSelectedFiles(
-        requiredFileTypes.reduce((acc, type) => {
-          acc[type] = null;
-          return acc;
-        }, {})
+        requiredFileTypes.reduce((acc, type) => ({ ...acc, [type]: null }), {})
       );
 
-      console.log("Переход на дашборд:", newCourse.dashboardLink);
-      navigate(newCourse.dashboardLink); // Переходим на дашборд
+      navigate(newCourseEntry.dashboardLink);
     } catch (err) {
-      console.error("Ошибка при сохранении курса:", err);
-      setError(`Ошибка сохранения: ${err.message}`);
-      // Не сбрасываем файлы здесь, чтобы пользователь мог попробовать сохранить снова
-      setIsNameModalOpen(true); // Открываем модалку снова при ошибке сохранения
+      console.error("Ошибка при сохранении анализа:", err);
+      setError(`Ошибка сохранения: ${err.message || 'Неизвестная ошибка'}. Попробуйте снова.`);
     }
   };
 
   const openDeleteDialog = (course) => {
-    setCourseToDelete(course); // Сохраняем весь объект курса
+    setCourseToDelete(course);
     setIsDeleteDialogOpen(true);
   };
 
   const closeDeleteDialog = () => {
     setIsDeleteDialogOpen(false);
-    setCourseToDelete(null); // Сбрасываем курс для удаления
+    setCourseToDelete(null);
   };
 
   const confirmDeleteCourse = () => {
     if (courseToDelete) {
-      console.log("Удаление курса с ID:", courseToDelete.id);
+      console.log(
+        "Удаление анализа, связанного с ID курса:",
+        courseToDelete.id
+      );
       setUploadedCourses((prevCourses) =>
         prevCourses.filter((course) => course.id !== courseToDelete.id)
       );
-      // Данные автоматически сохранятся в localStorage благодаря useEffect
     }
-    closeDeleteDialog(); // Закрываем диалог после удаления
+    closeDeleteDialog();
   };
-  // --- Конец обработчиков ---
 
   return (
-    <Box sx={{ mt: 4, mb: 4 }}>
+    <Box sx={{ mt: 4, mb: 4, pl: 3, pr: 3 }}>
       <Typography variant="h4" gutterBottom align="center">
-        Загрузка данных курса
+        Добавление анализа для курса
       </Typography>
       <Typography paragraph align="center" sx={{ mb: 4 }}>
-        Пожалуйста, загрузите 4 CSV файла с данными вашего курса.
+        Пожалуйста, загрузите 4 CSV файла с данными вашего курса. Аналитика
+        будет связана с одним из предопределенных курсов на сервере.
       </Typography>
-
-      {/* Компоновка для загрузки файлов */}
       <Grid container spacing={4} justifyContent="center">
+        {/* ... Блок с выбором файлов ... (остается без изменений) */}
         {requiredFileTypes.map((fileType) => (
           <Grid item xs={12} sm={6} md={3} key={fileType}>
             <Paper
               elevation={3}
-              sx={{ p: 3, textAlign: "center", height: "100%" }}
+              sx={{
+                p: 3,
+                textAlign: "center",
+                height: "100%",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "space-between",
+              }}
             >
-              <Typography variant="h6" gutterBottom>
-                {fileType.charAt(0).toUpperCase() + fileType.slice(1)} Data
-              </Typography>
-              <Typography variant="body2" color="textSecondary" gutterBottom>
-                ({fileType}.csv)
-              </Typography>
-              {/* Кнопки Пример / Выбрать файл */}
-              <Box
-                sx={{
-                  mt: 2,
-                  mb: 2,
-                  display: "flex",
-                  justifyContent: "space-around",
-                  alignItems: "center",
-                }}
-              >
-                <Button
-                  variant="text"
-                  size="small"
-                  startIcon={<VisibilityIcon />}
-                  onClick={() => handleShowExample(fileType)}
+              <div>
+                <Typography variant="h6" gutterBottom>
+                  {fileType.charAt(0).toUpperCase() + fileType.slice(1)} Data
+                </Typography>
+                <Typography variant="body2" color="textSecondary" gutterBottom>
+                  ({fileType}.csv)
+                </Typography>
+                <Box
+                  sx={{
+                    mt: 2,
+                    mb: 2,
+                    display: "flex",
+                    justifyContent: "space-around",
+                    alignItems: "center",
+                  }}
                 >
-                  Пример
-                </Button>
-                <Button
-                  variant="contained"
-                  component="label"
-                  startIcon={<UploadFileIcon />}
-                  size="small"
-                >
-                  Выбрать файл
-                  <input
-                    type="file"
-                    accept=".csv"
-                    hidden
-                    onChange={(e) => handleFileChange(e, fileType)}
-                  />
-                </Button>
-              </Box>
-              {/* Отображение выбранного файла */}
+                  <Button
+                    variant="text"
+                    size="small"
+                    startIcon={<VisibilityIcon />}
+                    onClick={() => handleShowExample(fileType)}
+                  >
+                    Пример
+                  </Button>
+                  <Button
+                    variant="contained"
+                    component="label"
+                    startIcon={<UploadFileIcon />}
+                    size="small"
+                  >
+                    Выбрать файл
+                    <input
+                      type="file"
+                      accept=".csv"
+                      hidden
+                      onChange={(e) => handleFileChange(e, fileType)}
+                    />
+                  </Button>
+                </Box>
+              </div>
               {selectedFiles[fileType] ? (
                 <Chip
                   label={selectedFiles[fileType].name}
@@ -288,41 +299,44 @@ function UploadCourse() {
                   }}
                 />
               ) : (
-                // Placeholder для выравнивания высоты
                 <Box sx={{ height: "31px", mt: 1 }} />
               )}
             </Paper>
           </Grid>
         ))}
       </Grid>
-
-      {/* Отображение общей ошибки */}
       {error && (
         <Alert
           severity="error"
           sx={{ mt: 3, width: "fit-content", margin: "24px auto 0" }}
+          onClose={() => setError(null)}
         >
           {error}
         </Alert>
       )}
-
-      {/* Список загруженных курсов */}
       <Typography variant="h6" gutterBottom sx={{ mt: 5, mb: 2 }}>
-        Загруженные курсы:
+        Добавленные анализы курсов:
       </Typography>
       {uploadedCourses.length > 0 ? (
         <TableContainer component={Paper}>
-          <Table sx={{ minWidth: 650 }} aria-label="saved courses table">
+          <Table sx={{ minWidth: 750 }} aria-label="saved courses table"> {/* Увеличил minWidth для новой колонки */}
             <TableHead>
               <TableRow>
                 <TableCell sx={{ fontWeight: "bold" }}>
-                  Название курса
+                  Название анализа
+                </TableCell>
+                <TableCell sx={{ fontWeight: "bold" }}>
+                  Связан с ID курса
                 </TableCell>
                 <TableCell sx={{ fontWeight: "bold" }} align="right">
-                  Дата загрузки
+                  Дата добавления
                 </TableCell>
                 <TableCell sx={{ fontWeight: "bold" }} align="center">
                   Дашборд
+                </TableCell>
+                {/* НОВАЯ КОЛОНКА */}
+                <TableCell sx={{ fontWeight: "bold" }} align="center">
+                  Классификация
                 </TableCell>
                 <TableCell sx={{ fontWeight: "bold" }} align="center">
                   Удалить
@@ -332,33 +346,41 @@ function UploadCourse() {
             <TableBody>
               {uploadedCourses.map((course) => (
                 <TableRow
-                  hover // Добавляем эффект при наведении
-                  key={course.id} // Используем уникальный ID как ключ
+                  hover
+                  key={course.id + course.name}
                   sx={{ "&:last-child td, &:last-child th": { border: 0 } }}
                 >
                   <TableCell component="th" scope="row">
                     {course.name}
                   </TableCell>
+                  <TableCell>{course.id}</TableCell>
                   <TableCell align="right">{course.date}</TableCell>
                   <TableCell align="center">
-                    {" "}
-                    {/* Центрируем кнопку */}
                     <Button
                       size="small"
                       component={RouterLink}
                       to={course.dashboardLink}
+                      disabled={!course.dashboardLink} // Дизейбл, если ссылки нет
                     >
                       Перейти
                     </Button>
                   </TableCell>
+                  {/* НОВАЯ ЯЧЕЙКА ДЛЯ КЛАССИФИКАЦИИ */}
                   <TableCell align="center">
-                    {" "}
-                    {/* Центрируем кнопку */}
-                    <IconButton
-                      aria-label={`Удалить курс ${course.name}`}
+                    <Button
                       size="small"
-                      onClick={() => openDeleteDialog(course)} // Открываем диалог удаления
-                      color="error" // Делаем кнопку красной для наглядности
+                      component={RouterLink}
+                      to={course.classificationLink || '#'} // Используем classificationLink
+                    >
+                      Детали
+                    </Button>
+                  </TableCell>
+                  <TableCell align="center">
+                    <IconButton
+                      aria-label={`Удалить анализ ${course.name}`}
+                      size="small"
+                      onClick={() => openDeleteDialog(course)}
+                      color="error"
                     >
                       <DeleteIcon fontSize="small" />
                     </IconButton>
@@ -372,27 +394,26 @@ function UploadCourse() {
         <Typography
           sx={{ textAlign: "center", color: "text.secondary", mt: 2 }}
         >
-          Вы еще не загружали курсы.
+          Вы еще не добавляли анализы курсов.
         </Typography>
       )}
-
-      {/* Модальное окно для ввода названия курса */}
+      {/* ... Диалоговые окна (остаются без изменений) ... */}
       <Dialog
         open={isNameModalOpen}
         onClose={handleCloseNameModal}
         maxWidth="xs"
         fullWidth
       >
-        <DialogTitle>Введите название курса</DialogTitle>
+        <DialogTitle>Введите название для этого анализа</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus
             margin="dense"
-            id="course-name-modal" // Добавляем id для ясности
-            label="Название курса"
+            id="course-name-modal"
+            label="Название (например, 'Анализ курса Математика, весна 2024')"
             type="text"
             fullWidth
-            variant="outlined" // Используем Outlined для консистентности
+            variant="outlined"
             value={modalCourseName}
             onChange={handleModalCourseNameChange}
             error={!!modalError}
@@ -409,12 +430,10 @@ function UploadCourse() {
             variant="contained"
             color="primary"
           >
-            Сохранить
+            Сохранить и перейти
           </Button>
         </DialogActions>
       </Dialog>
-
-      {/* Диалоговое окно для показа примера */}
       <Dialog
         open={dialogOpen}
         onClose={handleCloseDialog}
@@ -423,7 +442,6 @@ function UploadCourse() {
       >
         <DialogTitle>{dialogData.title}</DialogTitle>
         <DialogContent dividers>
-          {/* Код отображения примера CSV */}
           {dialogData.headers.length > 0 ? (
             <TableContainer component={Paper}>
               <Table size="small" aria-label="example table">
@@ -455,8 +473,6 @@ function UploadCourse() {
           <Button onClick={handleCloseDialog}>Закрыть</Button>
         </DialogActions>
       </Dialog>
-
-      {/* Диалог подтверждения удаления */}
       <Dialog
         open={isDeleteDialogOpen}
         onClose={closeDeleteDialog}
@@ -468,8 +484,8 @@ function UploadCourse() {
         </DialogTitle>
         <DialogContent>
           <Typography id="delete-confirm-dialog-description">
-            Вы уверены, что хотите удалить курс "{courseToDelete?.name}"? Это
-            действие необратимо.
+            Вы уверены, что хотите удалить анализ "{courseToDelete?.name}"
+            (связан с курсом ID: {courseToDelete?.id})? Это действие необратимо.
           </Typography>
         </DialogContent>
         <DialogActions sx={{ padding: "16px 24px" }}>

@@ -9,6 +9,7 @@ import Dashboard from './components/Dashboard';
 import StepAnalysis from './components/StepAnalysis';
 import StepComparison from './components/StepComparison';
 import BreadcrumbsNav from './components/BreadcrumbsNav';
+import ClassificationPage from './components/ClassificationPage'; 
 const theme = createTheme({
   palette: {
     primary: {
@@ -45,6 +46,7 @@ function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/step/:stepId" element={<StepAnalysis />} />
             <Route path="/compare" element={<StepComparison />} /> {/* Новый маршрут */}
+            <Route path="/classification" element={<ClassificationPage />} />
           </Routes>
         </Box>
       </ThemeProvider>
