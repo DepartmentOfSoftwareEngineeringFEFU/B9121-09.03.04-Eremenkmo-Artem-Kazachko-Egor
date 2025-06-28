@@ -49,7 +49,7 @@ cd <ИМЯ-РЕПОЗИТОРИЯ>
 ## Настройка backend
 Активация виртуального окружения
 cd backend
-python -m venv venv
+(python или py) -m venv venv
 .\venv\Scripts\activate
 
 ## Установка зависимостей
