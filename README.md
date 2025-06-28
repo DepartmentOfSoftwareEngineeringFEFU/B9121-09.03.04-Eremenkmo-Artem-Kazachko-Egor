@@ -70,6 +70,8 @@ $env:RUN_MODE = "server"
 
 $env:FLASK_DEBUG = "1" 
 
+(энвы из корневой папки)
+
 flask run
 
 Frontend (во втором терминале)
@@ -78,7 +80,11 @@ cd frontend
 
 npm start
 
-Если по какой то причине кеш файлы не загружаются, то Откройте файл backend/database.py.
+Если по какой то причине кеш файлы не загружаются, то скачайте heidisql с оф. сайта и данные БД для heidisql (https://drive.google.com/file/d/1LKEUvjFHlM_op-ubUGHHJAwjWAZjS9mc/view?usp=sharing)
+
+ИЛИ
+
+Откройте файл backend/database.py.
 
 Найдите строку app.config['SQLALCHEMY_DATABASE_URI'] и измените параметры подключения к вашей локальной базе данных MySQL (имя пользователя, пароль, имя БД).
 # Пример строки подключения
