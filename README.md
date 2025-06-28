@@ -44,7 +44,7 @@
 
 ### Клонирование репозитория
 
-git clone https://github.com/<ВАШ-ЛОГИН>/<ИМЯ-РЕПОЗИТОРИЯ>.git
+git clone https://github.com/DepartmentOfSoftwareEngineeringFEFU/B9121-09.03.04-Eremenkmo-Artem-Kazachko-Egor.git
 cd <ИМЯ-РЕПОЗИТОРИЯ>
 ## Настройка backend
 Активация виртуального окружения
