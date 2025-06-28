@@ -88,6 +88,8 @@ cd frontend
 
 npm start
 
+Для работы приложения этого достаточно, если все работает - пропустите текст до раздела "Использование приложения"
+
 Если по какой то причине кеш файлы не загружаются, то скачайте heidisql с оф. сайта и данные БД для heidisql (https://drive.google.com/file/d/1LKEUvjFHlM_op-ubUGHHJAwjWAZjS9mc/view?usp=sharing)
 
 ИЛИ
