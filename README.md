@@ -46,15 +46,13 @@
 
 git clone https://github.com/<ВАШ-ЛОГИН>/<ИМЯ-РЕПОЗИТОРИЯ>.git
 cd <ИМЯ-РЕПОЗИТОРИЯ>
-Настройка backend
+## Настройка backend
 Активация виртуального окружения
-
 cd backend
 python -m venv venv
 .\venv\Scripts\activate
 
-
-Установка зависимостей
+## Установка зависимостей
 backend:
 pip install -r requirements.txt
 frontend(в другом терминале):
