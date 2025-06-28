@@ -3,18 +3,16 @@ import { Link as RouterLink } from "react-router-dom";
 import { AppBar, Toolbar, Typography, Button, Box } from "@mui/material";
 import { styled } from "@mui/system";
 
-
 const StyledAppBar = styled(AppBar)(({ theme }) => ({
-  backgroundColor: "#171718", 
+  backgroundColor: "#171718",
   height: "8vh",
 }));
 
-
 const StyledButton = styled(Button)(({ theme }) => ({
-  color: "inherit", 
+  color: "inherit",
   "&:hover": {
-    textDecoration: "none", 
-    borderBottom: "3px solid #5c62ec", 
+    textDecoration: "none",
+    borderBottom: "3px solid #5c62ec",
   },
 }));
 
@@ -45,10 +43,6 @@ function Header() {
           </StyledButton>
           <StyledButton color="inherit" component={RouterLink} to="/upload">
             Курсы
-          </StyledButton>
-          
-          <StyledButton color="inherit" >
-            Регистрация
           </StyledButton>
         </Box>
       </Toolbar>
