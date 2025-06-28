@@ -49,14 +49,21 @@ git clone https://github.com/DepartmentOfSoftwareEngineeringFEFU/B9121-09.03.04-
 cd <ИМЯ-РЕПОЗИТОРИЯ>
 ## Настройка backend
 Активация виртуального окружения
+
 cd backend
+
 (python или py) -m venv venv
+
 .\venv\Scripts\activate
 
 ## Установка зависимостей
+
 backend:
+
 pip install -r requirements.txt
+
 frontend(в другом терминале):
+
 npm install
 
 ##  Запуск системы
