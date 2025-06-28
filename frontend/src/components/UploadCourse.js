@@ -1,4 +1,4 @@
-// src/components/UploadCourse.js
+
 import React, { useState, useEffect } from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
@@ -25,7 +25,6 @@ import {
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import DeleteIcon from "@mui/icons-material/Delete";
-import FunctionsIcon from '@mui/icons-material/Functions'; // Можно использовать иконку для Классификации, если есть подходящая
 import { csvExamples } from "./UploadCourseExamples";
 
 const requiredFileTypes = ["learners", "structure", "submissions", "comments"];
@@ -160,26 +159,16 @@ function UploadCourse() {
     );
 
     try {
-      // Имитация вызова API (заглушка)
-      // const formData = new FormData();
-      // requiredFileTypes.forEach((type) => {
-      //   if (selectedFiles[type]) {
-      //     formData.append(type, selectedFiles[type], selectedFiles[type].name);
-      //   }
-      // });
-      // formData.append("courseName", userGivenName);
-      // formData.append("associatedBackendCourseId", courseIdForLinkAndStorage.toString());
-      // await uploadCourse(formData); // Это твоя заглушка из apiService.js
+      
 
-      await new Promise((resolve) => setTimeout(resolve, 500)); // Имитация задержки
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
       const newCourseEntry = {
-        id: courseIdForLinkAndStorage, // Числовой ID
+        id: courseIdForLinkAndStorage, 
         name: userGivenName,
         date: new Date().toLocaleDateString("ru-RU"),
         dashboardLink: `/dashboard?courseId=${courseIdForLinkAndStorage}`,
-        // Добавляем ссылку для классификации
-        classificationLink: `/classification?courseId=${courseIdForLinkAndStorage}`, // <--- НОВАЯ ССЫЛКА
+       
       };
 
       setUploadedCourses((prevCourses) => [...prevCourses, newCourseEntry]);
@@ -191,7 +180,11 @@ function UploadCourse() {
       navigate(newCourseEntry.dashboardLink);
     } catch (err) {
       console.error("Ошибка при сохранении анализа:", err);
-      setError(`Ошибка сохранения: ${err.message || 'Неизвестная ошибка'}. Попробуйте снова.`);
+      setError(
+        `Ошибка сохранения: ${
+          err.message || "Неизвестная ошибка"
+        }. Попробуйте снова.`
+      );
     }
   };
 
@@ -319,25 +312,22 @@ function UploadCourse() {
       </Typography>
       {uploadedCourses.length > 0 ? (
         <TableContainer component={Paper}>
-          <Table sx={{ minWidth: 750 }} aria-label="saved courses table"> {/* Увеличил minWidth для новой колонки */}
+          <Table sx={{ minWidth: 750 }} aria-label="saved courses table">
+            {" "}
+            {}
             <TableHead>
               <TableRow>
-                <TableCell sx={{ fontWeight: "bold" }}>
+                <TableCell sx={{ fontWeight: "bold" }} >
                   Название анализа
                 </TableCell>
-                <TableCell sx={{ fontWeight: "bold" }}>
-                  Связан с ID курса
-                </TableCell>
-                <TableCell sx={{ fontWeight: "bold" }} align="right">
+                
+                <TableCell sx={{ fontWeight: "bold" }} align="center">
                   Дата добавления
                 </TableCell>
                 <TableCell sx={{ fontWeight: "bold" }} align="center">
                   Дашборд
                 </TableCell>
-                {/* НОВАЯ КОЛОНКА */}
-                <TableCell sx={{ fontWeight: "bold" }} align="center">
-                  Классификация
-                </TableCell>
+
                 <TableCell sx={{ fontWeight: "bold" }} align="center">
                   Удалить
                 </TableCell>
@@ -353,28 +343,20 @@ function UploadCourse() {
                   <TableCell component="th" scope="row">
                     {course.name}
                   </TableCell>
-                  <TableCell>{course.id}</TableCell>
-                  <TableCell align="right">{course.date}</TableCell>
+                  
+                  <TableCell align="center">{course.date}</TableCell>
                   <TableCell align="center">
                     <Button
                       size="small"
                       component={RouterLink}
                       to={course.dashboardLink}
-                      disabled={!course.dashboardLink} // Дизейбл, если ссылки нет
+                      disabled={!course.dashboardLink} 
                     >
                       Перейти
                     </Button>
                   </TableCell>
-                  {/* НОВАЯ ЯЧЕЙКА ДЛЯ КЛАССИФИКАЦИИ */}
-                  <TableCell align="center">
-                    <Button
-                      size="small"
-                      component={RouterLink}
-                      to={course.classificationLink || '#'} // Используем classificationLink
-                    >
-                      Детали
-                    </Button>
-                  </TableCell>
+                  
+                  
                   <TableCell align="center">
                     <IconButton
                       aria-label={`Удалить анализ ${course.name}`}

@@ -7,10 +7,10 @@ import {
   CircularProgress,
   Alert,
   Box,
-  Button, // <--- Убедись, что Button здесь импортирован
+  Button, 
 } from "@mui/material";
 
-// Импортируем новые компоненты (предполагаем, что они лежат рядом в src/components/)
+
 import GlobalCourseMetrics from './GlobalCourseMetrics';
 import DashboardFilters from './DashboardFilters';
 import DashboardChart from './DashboardChart';
@@ -18,10 +18,10 @@ import DashboardTable from './DashboardTable';
 import Recommendations from "./Recommendations";
 
 // Утилиты и константы
-import { availableMetrics } from './dashboardUtils'; // Предполагаем, что dashboardUtils.js лежит в src/components/
+import { availableMetrics } from './dashboardUtils'; 
 
 // API сервис
-import { getStepsStructure, getCourseCompletionRates } from "../api/apiService"; // <--- ИСПРАВЛЕН ПУТЬ
+import { getStepsStructure, getCourseCompletionRates } from "../api/apiService"; 
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -58,16 +58,16 @@ function Dashboard() {
     }
 
     let numericIdForApi;
-    // Всегда пытаемся получить числовой ID для API
+ 
     const parsedId = parseInt(idFromUrl, 10);
     if (!isNaN(parsedId)) {
         numericIdForApi = parsedId;
     } else {
-        // Если не число, это проблема для текущей логики API вызовов
+    
         setError(`Некорректный ID курса в URL для API: "${idFromUrl}" не является числом.`);
         setLoading(false);
         setCurrentNumericCourseId(null);
-        setCourseIdForLocalStorage(idFromUrl); // Сохраняем оригинальный для отображения
+        setCourseIdForLocalStorage(idFromUrl); 
         setCourseTitle(`Ошибка ID: ${idFromUrl}`);
         return;
     }
@@ -278,7 +278,7 @@ function Dashboard() {
         <Alert severity="error" sx={{ mb: 2 }}>
             Ошибка загрузки данных курса: {error}
         </Alert>
-        <Button onClick={() => window.location.reload()} variant="outlined"> {/* Кнопка теперь определена */}
+        <Button onClick={() => window.location.reload()} variant="outlined"> {}
           Попробовать снова
         </Button>
       </Container>
@@ -339,7 +339,7 @@ function Dashboard() {
         />
       }
 
-      {!isMajorError && currentNumericCourseId != null && !isNaN(currentNumericCourseId) && ( // Проверяем, что currentNumericCourseId - число
+      {!isMajorError && currentNumericCourseId != null && !isNaN(currentNumericCourseId) && ( 
          <Recommendations
             courseId={currentNumericCourseId}
             courseTitleFromUpload={courseTitle}

@@ -3,18 +3,18 @@ import { Link as RouterLink } from "react-router-dom";
 import { AppBar, Toolbar, Typography, Button, Box } from "@mui/material";
 import { styled } from "@mui/system";
 
-// Стилизованный компонент для AppBar
+
 const StyledAppBar = styled(AppBar)(({ theme }) => ({
-  backgroundColor: "#171718", // Устанавливаем нужный цвет
+  backgroundColor: "#171718", 
   height: "8vh",
 }));
 
-// Стилизованный компонент для Button
+
 const StyledButton = styled(Button)(({ theme }) => ({
-  color: "inherit", // Наследуем цвет от родителя
+  color: "inherit", 
   "&:hover": {
-    textDecoration: "none", // Убираем стандартное подчеркивание
-    borderBottom: "3px solid #5c62ec", // Добавляем border-bottom
+    textDecoration: "none", 
+    borderBottom: "3px solid #5c62ec", 
   },
 }));
 
@@ -22,14 +22,14 @@ function Header() {
   return (
     <StyledAppBar position="static">
       <Toolbar>
-        {/* Оборачиваем логотип в RouterLink */}
+        {}
         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
           <RouterLink
             to="/"
             style={{ textDecoration: "none", color: "inherit" }}
           >
             {" "}
-            {/* Стили для ссылки */}
+            {}
             Course
             <Typography variant="h6" component="span" sx={{ color: "#5c62ec" }}>
               Analytics
@@ -37,9 +37,9 @@ function Header() {
           </RouterLink>
         </Typography>
 
-        {/* Навигационные кнопки */}
+        {}
         <Box>
-          {/* ... кнопки ... */}
+          {}
           <StyledButton color="inherit" component={RouterLink} to="/">
             Главная
           </StyledButton>

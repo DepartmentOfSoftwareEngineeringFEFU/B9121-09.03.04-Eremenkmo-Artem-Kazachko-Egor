@@ -27,25 +27,25 @@
 .App-link {
   color: #61dafb;
 }
-/* Пример в App.css или index.css */
+
 .super-app-theme--good {
-  background-color: rgba(0, 128, 0, 0.15); /* Светло-зеленый фон */
-  color: darkgreen; /* Темно-зеленый текст */
+  background-color: rgba(0, 128, 0, 0.15); 
+  color: darkgreen; 
   font-weight: 500;
 }
 
 .super-app-theme--bad {
-  background-color: rgba(255, 0, 0, 0.15); /* Светло-красный фон */
-  color: darkred; /* Темно-красный текст */
+  background-color: rgba(255, 0, 0, 0.15);
+  color: darkred; 
   font-weight: 500;
 }
 
 .super-app-theme--normal {
-  background-color: rgba(255, 165, 0, 0.1); /* Светло-оранжевый фон */
-  /* color: #cc8400; */ /* Можно задать цвет текста, если нужно */
+  background-color: rgba(255, 165, 0, 0.1); 
+ 
 }
 
-/* Если хочешь красить только текст, а не фон: */
+
 .text-good {
   color: green;
   font-weight: bold;

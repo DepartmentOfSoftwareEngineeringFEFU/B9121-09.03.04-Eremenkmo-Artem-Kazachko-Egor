@@ -2,9 +2,7 @@
 import React from 'react';
 import { Grid, Paper, Typography, Alert } from '@mui/material';
 
-// Функцию форматирования можно импортировать из общего файла утилит
-// или определить здесь, если она специфична.
-// Предположим, что formatPercentage уже доступен (например, импортирован).
+
 const formatPercentage = (value) => {
     if (value === null || typeof value !== 'number' || !isFinite(value)) return "N/A";
     if (value > 1 && value <= 100) { // Если уже передано как 0-100
@@ -19,7 +17,7 @@ const formatPercentage = (value) => {
 
 function GlobalCourseMetrics({ globalMetricsState, isLoading }) {
   if (isLoading) {
-    // Можно показать скелетоны или просто ничего не рендерить во время основной загрузки
+
     return null; 
   }
 

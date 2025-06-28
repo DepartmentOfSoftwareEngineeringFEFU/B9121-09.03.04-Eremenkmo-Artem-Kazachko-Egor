@@ -1,7 +1,7 @@
 import React from "react";
 import { Typography, Box, Button } from "@mui/material";
 import { styled } from "@mui/system";
-import AnimatedLinesBackground from "./AnimatedLinesBackground"; // Импортируем
+import AnimatedLinesBackground from "./AnimatedLinesBackground"; 
 const StyledButton = styled(Button)(({ theme }) => ({
   backgroundColor: theme.palette.primary.main,
   color: theme.palette.common.white,
@@ -12,9 +12,9 @@ const StyledButton = styled(Button)(({ theme }) => ({
 
 function Home() {
   return (
-    <Box // Заменяем React.Fragment на Box
+    <Box 
       sx={{
-        width: "100%", // Занимает всю ширину экрана
+        width: "100%", 
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -25,16 +25,16 @@ function Home() {
       <Box
         sx={{
           backgroundColor: "#171718",
-          width: "100%", // Важно!
+          width: "100%", 
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           padding: "5rem",
           flexGrow: 1,
-          textAlign: "center", // Выравниваем текст по центру
+          textAlign: "center", 
         }}
       >
-        <AnimatedLinesBackground /> {/* Добавляем AnimatedLinesBackground */}
+        <AnimatedLinesBackground /> {}
         <Typography
           variant="h3"
           gutterBottom

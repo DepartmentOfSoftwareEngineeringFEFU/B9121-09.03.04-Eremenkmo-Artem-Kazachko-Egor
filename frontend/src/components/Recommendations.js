@@ -12,7 +12,7 @@ import {
 } from "@mui/material";
 
 // Объект с рекомендациями для каждого courseId
-// ЗАПОЛНИ ЭТОТ ОБЪЕКТ СВОИМИ РЕАЛЬНЫМИ РЕКОМЕНДАЦИЯМИ!
+
 const courseSpecificRecommendations = {
   63054: {
     general: [
@@ -23,12 +23,12 @@ const courseSpecificRecommendations = {
       {
         metric: "Шаг 1037221 (текст)",
         suggestion:
-          "Низкий 'usefulness_index'. Возможно, стоит добавить практический пример или задание после этого текстового блока для лучшего усвоения.",
+          "Низкий 'Индекс вовлеченности'. Возможно, стоит добавить практический пример или задание после этого текстового блока для лучшего усвоения.",
       },
       {
         metric: "Модуль 112676 в целом",
         suggestion:
-          "Проанализируйте шаги с высоким 'skip_rate', возможно, они не воспринимаются как обязательные или слишком сложны без достаточной мотивации.",
+          "Проанализируйте шаги с высокой 'Долей пропуска шага', возможно, они не воспринимаются как обязательные или слишком сложны без достаточной мотивации.",
       },
     ],
     strengths: [
@@ -117,7 +117,7 @@ function Recommendations({ courseId, courseTitleFromUpload }) {
       <Typography variant="h5" component="h2" gutterBottom color="primary">
         {displayTitle}
       </Typography>
-      {/* Опциональный вывод ID курса мелким шрифтом под заголовком, если есть пользовательское название */}
+      {}
       {courseTitleFromUpload && courseId && !isNaN(numericCourseId) && (
         <Typography
           variant="caption"

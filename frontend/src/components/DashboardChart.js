@@ -1,14 +1,14 @@
 // src/components/Dashboard/DashboardChart.js
 import React from 'react';
-import { Paper, Typography, Box, Tooltip as MuiTooltip, IconButton } from '@mui/material'; // Добавили MuiTooltip, IconButton
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'; // Иконка для подсказки
+import { Paper, Typography, Box, Tooltip as MuiTooltip, IconButton } from '@mui/material'; 
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'; 
 import {
   LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip as RechartsTooltip, // Переименовали, чтобы не конфликтовать с MuiTooltip
+  Tooltip as RechartsTooltip, 
   Legend,
   ReferenceLine,
   ResponsiveContainer,
@@ -22,7 +22,7 @@ function DashboardChart({
   availableMetrics,
   onMetricChange,
   yAxisDomain,
-  yAxisTicks, // Добавили yAxisTicks
+  yAxisTicks, 
   goodThresholdValue,
   badThresholdValue,
   invertThresholds,
@@ -47,10 +47,10 @@ function DashboardChart({
           justifyContent: 'space-between',
           alignItems: 'center',
           flexWrap: 'wrap',
-          mb: 1, // Уменьшил mb для более плотного расположения
+          mb: 1, 
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center' }}> {/* Обертка для заголовка и иконки */}
+        <Box sx={{ display: 'flex', alignItems: 'center' }}> {}
           <Typography variant="h6">
             Статистика по шагам ({selectedMetric?.label ?? 'Выберите метрику'})
           </Typography>
@@ -93,7 +93,7 @@ function DashboardChart({
               return parseFloat(value).toFixed(0);
             }}
           />
-          <RechartsTooltip // Используем переименованный RechartsTooltip
+          <RechartsTooltip 
             formatter={(value, name, props) => {
               const originalStepData = props.payload;
               const originalMetricValue = originalStepData && selectedMetric?.dataKey ? originalStepData[selectedMetric.dataKey] : null;
@@ -127,8 +127,8 @@ function DashboardChart({
             >
               <Label
                 value={`Плохо ${invertThresholds ? '>' : '<'} ${
-                  selectedMetric?.format && selectedMetric?.thresholdBad != null // Проверяем наличие thresholdBad
-                  ? selectedMetric.format(selectedMetric.thresholdBad) // Форматируем оригинальное значение порога
+                  selectedMetric?.format && selectedMetric?.thresholdBad != null 
+                  ? selectedMetric.format(selectedMetric.thresholdBad) 
                   : badThresholdValue 
                 }`}
                 position="insideTopLeft"
@@ -146,8 +146,8 @@ function DashboardChart({
             >
               <Label
                 value={`Хорошо ${invertThresholds ? '<' : '>'} ${
-                  selectedMetric?.format && selectedMetric?.thresholdGood != null // Проверяем наличие thresholdGood
-                  ? selectedMetric.format(selectedMetric.thresholdGood) // Форматируем оригинальное значение порога
+                  selectedMetric?.format && selectedMetric?.thresholdGood != null 
+                  ? selectedMetric.format(selectedMetric.thresholdGood) 
                   : goodThresholdValue
                 }`}
                 position="insideBottomRight"

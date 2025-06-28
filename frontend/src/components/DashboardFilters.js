@@ -1,5 +1,5 @@
 // src/components/Dashboard/DashboardFilters.js
-import React from 'react';
+import React from "react";
 import {
   Paper,
   Typography,
@@ -11,64 +11,76 @@ import {
   Chip,
   MenuItem,
   Checkbox,
-  ListItemText
-} from '@mui/material';
+  ListItemText,
+} from "@mui/material";
 
 function DashboardFilters({
-  modules,              // Массив объектов модулей ( { id, title, position } )
-  selectedModuleIds,    // Массив ID выбранных модулей
-  setSelectedModuleIds, // Функция для обновления выбранных модулей
-  isLoading // Опционально: флаг загрузки, чтобы дизейблить фильтр во время загрузки данных курса
+  modules,
+  selectedModuleIds,
+  setSelectedModuleIds,
+  isLoading,
 }) {
   const handleModuleChange = (event) => {
-    const value = event.target.value; // value может быть массивом ID
+    const value = event.target.value;
     const SELECT_ALL_VALUE = "___SELECT_ALL___"; // Специальное значение для "Выбрать все"
 
     if (value.includes(SELECT_ALL_VALUE)) {
       // Если "Выбрать все" было кликнуто
-      const allValidModuleIds = modules.map(m => m.id).filter(id => id != null);
-      const currentValidSelectedIds = selectedModuleIds.filter(id => id != null);
+      const allValidModuleIds = modules
+        .map((m) => m.id)
+        .filter((id) => id != null);
+      const currentValidSelectedIds = selectedModuleIds.filter(
+        (id) => id != null
+      );
 
-      if (modules.length > 0 && currentValidSelectedIds.length === allValidModuleIds.length) {
-        // Если уже все выбраны, снимаем выделение
+      if (
+        modules.length > 0 &&
+        currentValidSelectedIds.length === allValidModuleIds.length
+      ) {
         setSelectedModuleIds([]);
       } else {
-        // Иначе выбираем все
         setSelectedModuleIds(allValidModuleIds);
       }
     } else {
-      // Обычный выбор/снятие выбора модулей
       setSelectedModuleIds(
-        // Убедимся, что это всегда массив, даже если выбран один элемент
-        typeof value === 'string' ? value.split(',') : value.filter(id => id != null)
+        typeof value === "string"
+          ? value.split(",")
+          : value.filter((id) => id != null)
       );
     }
   };
 
-  const allValidModuleIdsInCourse = modules.map(m => m.id).filter(id => id != null);
-  const allCurrentlySelectedValidIds = selectedModuleIds.filter(id => id != null);
+  const allValidModuleIdsInCourse = modules
+    .map((m) => m.id)
+    .filter((id) => id != null);
+  const allCurrentlySelectedValidIds = selectedModuleIds.filter(
+    (id) => id != null
+  );
 
-  const areAllModulesSelected = modules.length > 0 && allCurrentlySelectedValidIds.length === allValidModuleIdsInCourse.length;
-  const areSomeModulesSelected = allCurrentlySelectedValidIds.length > 0 && !areAllModulesSelected;
+  const areAllModulesSelected =
+    modules.length > 0 &&
+    allCurrentlySelectedValidIds.length === allValidModuleIdsInCourse.length;
+  const areSomeModulesSelected =
+    allCurrentlySelectedValidIds.length > 0 && !areAllModulesSelected;
 
   return (
     <Paper
       sx={{
         p: 2,
         mb: 3,
-        display: 'flex',
+        display: "flex",
         gap: 2,
-        alignItems: 'center',
-        flexWrap: 'wrap',
+        alignItems: "center",
+        flexWrap: "wrap",
       }}
     >
-      <Typography variant="body1" sx={{ mr: 1, fontWeight: 'bold' }}>
+      <Typography variant="body1" sx={{ mr: 1, fontWeight: "bold" }}>
         Фильтры:
       </Typography>
       <FormControl
-        sx={{ m: 1, minWidth: 280, maxWidth: 450 }} // Немного увеличил размеры для лучшего отображения
+        sx={{ m: 1, minWidth: 280, maxWidth: 450 }}
         size="small"
-        disabled={isLoading || modules.length === 0} // Дизейблим, если идет загрузка или нет модулей
+        disabled={isLoading || modules.length === 0}
       >
         <InputLabel id="module-select-label-dbf">Модули</InputLabel>
         <Select
@@ -78,7 +90,7 @@ function DashboardFilters({
           value={selectedModuleIds}
           onChange={handleModuleChange}
           input={<OutlinedInput label="Модули" />}
-          renderValue={(selected) => { // selected - это selectedModuleIds
+          renderValue={(selected) => {
             if (areAllModulesSelected) {
               return <em>Все модули ({modules.length})</em>;
             }
@@ -86,7 +98,7 @@ function DashboardFilters({
               return <em>Все модули ({modules.length || 0})</em>; // Показываем общее кол-во, если ничего не выбрано
             }
             return (
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
                 {selected.map((id) => {
                   const module = modules.find((m) => m.id === id);
                   return (
@@ -101,14 +113,11 @@ function DashboardFilters({
             );
           }}
           MenuProps={{
-            PaperProps: { style: { maxHeight: 250, width: 300 } }, // Немного увеличил maxHeight
+            PaperProps: { style: { maxHeight: 250, width: 300 } },
           }}
         >
           {/* Опция "Выбрать все" / "Снять выделение" */}
-          <MenuItem
-            value="___SELECT_ALL___"
-            disabled={modules.length === 0}
-          >
+          <MenuItem value="___SELECT_ALL___" disabled={modules.length === 0}>
             <Checkbox
               size="small"
               checked={areAllModulesSelected}
@@ -123,23 +132,21 @@ function DashboardFilters({
             />
           </MenuItem>
 
-          {/* Список модулей */}
+          {}
           {modules.map((module) =>
-            module.id != null ? ( // Пропускаем модули без ID, если такие могут быть
+            module.id != null ? (
               <MenuItem key={module.id} value={module.id}>
                 <Checkbox
                   checked={selectedModuleIds.includes(module.id)}
                   size="small"
                 />
-                <ListItemText
-                  primary={module.title || `Модуль ${module.id}`}
-                />
+                <ListItemText primary={module.title || `Модуль ${module.id}`} />
               </MenuItem>
             ) : null
           )}
         </Select>
       </FormControl>
-      {/* Здесь можно добавить другие фильтры в будущем, если понадобятся */}
+      {}
     </Paper>
   );
 }

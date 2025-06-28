@@ -13,7 +13,7 @@ code {
 }
 .metric-text--good {
   color: green;
-  font-weight: 500; /* Или bold, если предпочитаешь */
+  font-weight: 500; 
 }
 
 .metric-text--bad {
@@ -22,7 +22,7 @@ code {
 }
 
 .metric-text--normal {
-  color: orange; /* Или можно оставить цвет по умолчанию (inherit) */
+  color: orange; 
 }
 .step-name--bad { color: red; font-weight: 500; }
 .step-name--normal { color: orange; font-weight: 500; }
