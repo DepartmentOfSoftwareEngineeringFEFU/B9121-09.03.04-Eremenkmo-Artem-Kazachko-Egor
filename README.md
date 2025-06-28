@@ -83,15 +83,24 @@ npm start
 Найдите строку app.config['SQLALCHEMY_DATABASE_URI'] и измените параметры подключения к вашей локальной базе данных MySQL (имя пользователя, пароль, имя БД).
 # Пример строки подключения
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:ВАШ_ПАРОЛЬ@localhost/ИМЯ_ВАШЕЙ_БД?charset=utf8mb4'
+
 Для работы приложения необходимо наполнить базу данных данными из CSV-файлов. Для этого используется скрипт seed_database.py.
+
 Подготовьте данные:
+
 Убедитесь, что в директории backend/Courses_data/ есть папка с данными для анализа (например, course_1), которая содержит необходимые файлы: learners.csv, structure.csv, submissions.csv, comments.csv, AdditionalInfo.xlsx.
+
 Запустите скрипт наполнения:
+
 Находясь в директории backend с активированным виртуальным окружением, выполните команду, указав путь к папке с данными курса:
-# Убедитесь, что вы в папке backend
-cd backend
-python seed_database.py ./Courses_data/course_1
+
+Убедитесь, что вы в папке backend
+
+-cd backend
+-python seed_database.py ./Courses_data/course_1
+
 Скрипт создаст таблицы в базе данных (если их нет) и наполнит их данными из указанной папки.( но тогда первый запуск будет долгий и данные для бд заушить сюда не получиться(слишком большой вес) => Данные для бд (https://drive.google.com/file/d/1Frg0vmeY2bAvoQ7pOhsQTkqjqCyxNX7m/view))
+
 ## Использование приложения
 Перейдите на страницу /upload.
 
