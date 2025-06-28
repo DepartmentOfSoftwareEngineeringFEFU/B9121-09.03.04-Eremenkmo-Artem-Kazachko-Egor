@@ -61,15 +61,25 @@ npm install
 ##  Запуск системы
 Backend (в первом терминале)
 cd ..\
+
 backend\venv\Scripts\activate(если не активно)
+
 $env:FLASK_APP = "backend.database:app"
+
 $env:RUN_MODE = "server"
+
 $env:FLASK_DEBUG = "1" 
+
 flask run
+
 Frontend (во втором терминале)
+
 cd frontend
+
 npm start
+
 Если по какой то причине кеш файлы не загружаются, то Откройте файл backend/database.py.
+
 Найдите строку app.config['SQLALCHEMY_DATABASE_URI'] и измените параметры подключения к вашей локальной базе данных MySQL (имя пользователя, пароль, имя БД).
 # Пример строки подключения
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:ВАШ_ПАРОЛЬ@localhost/ИМЯ_ВАШЕЙ_БД?charset=utf8mb4'
@@ -93,6 +103,3 @@ python seed_database.py ./Courses_data/course_1
 
 Откроется дашборд с визуализацией метрик.
 
-Примечания
-Данные курса должны быть загружены заранее с помощью скрипта seed_database.py.
-Приложение не использует внешние API и не требует авторизации.
